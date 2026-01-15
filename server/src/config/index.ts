@@ -19,7 +19,7 @@ interface Config {
         refreshExpiresIn: string;
     };
     cors: {
-        origin: string;
+        origin: string | string[];
     };
 }
 
@@ -38,7 +38,9 @@ const config: Config = {
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
     },
     cors: {
-        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+        origin: process.env.CORS_ORIGIN?.includes(',')
+            ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+            : process.env.CORS_ORIGIN || 'http://localhost:3000',
     },
 };
 
