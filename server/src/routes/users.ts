@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { getSupabaseClient } from '../database/supabase';
 import { authenticate, authorize } from '../middleware/auth';
@@ -22,7 +22,7 @@ router.use(authenticate);
  * GET /api/users/roles
  * Get all available roles
  */
-router.get('/roles', authorize('admin'), async (req: Request, res: Response, next) => {
+router.get('/roles', authorize('admin'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const supabase = getSupabaseClient();
         const { data, error } = await supabase
@@ -45,7 +45,7 @@ router.get('/roles', authorize('admin'), async (req: Request, res: Response, nex
  * POST /api/users/upload-avatar
  * Upload user avatar to Supabase Storage
  */
-router.post('/upload-avatar', authenticate, upload.single('avatar'), async (req: Request, res: Response, next) => {
+router.post('/upload-avatar', authenticate, upload.single('avatar'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (!req.file) {
             throw new AppError('Không có file nào được tải lên', 400);
@@ -83,7 +83,7 @@ router.post('/upload-avatar', authenticate, upload.single('avatar'), async (req:
 /**
  * GET /api/users
  */
-router.get('/', authorize('users:read', 'projects:write', 'projects:read'), async (req: Request, res: Response, next) => {
+router.get('/', authorize('users:read', 'projects:write', 'projects:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { search = '', page = 1, limit = 10 } = req.query;
         const supabase = getSupabaseClient();
@@ -125,7 +125,7 @@ router.get('/', authorize('users:read', 'projects:write', 'projects:read'), asyn
 /**
  * POST /api/users
  */
-router.post('/', authorize('admin'), async (req: Request, res: Response, next) => {
+router.post('/', authorize('admin'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, password, full_name, phone, role_id, img_url } = req.body;
 
@@ -166,7 +166,7 @@ router.post('/', authorize('admin'), async (req: Request, res: Response, next) =
 /**
  * PUT /api/users/:id
  */
-router.put('/:id', authorize('admin'), async (req: Request, res: Response, next) => {
+router.put('/:id', authorize('admin'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const { full_name, phone, role_id, is_active, password, img_url } = req.body;
@@ -204,7 +204,7 @@ router.put('/:id', authorize('admin'), async (req: Request, res: Response, next)
 /**
  * DELETE /api/users/:id
  */
-router.delete('/:id', authorize('admin'), async (req: Request, res: Response, next) => {
+router.delete('/:id', authorize('admin'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();
@@ -225,7 +225,7 @@ router.delete('/:id', authorize('admin'), async (req: Request, res: Response, ne
 /**
  * GET /api/users/:id
  */
-router.get('/:id', async (req: Request, res: Response, next) => {
+router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();

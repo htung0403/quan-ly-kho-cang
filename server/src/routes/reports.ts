@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { getSupabaseClient } from '../database/supabase';
 import { authenticate, authorize } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
@@ -11,7 +11,7 @@ router.use(authenticate);
  * GET /api/reports/dashboard
  * Get dashboard overview data
  */
-router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req: Request, res: Response, next) => {
+router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const supabase = getSupabaseClient();
         const today = new Date().toISOString().split('T')[0];
@@ -100,13 +100,13 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             chartDataMap[dateStr] = { date: displayDate, revenue: 0, profit: 0, cost: 0 };
         }
 
-        weeklyExports.data?.forEach(r => {
+        weeklyExports.data?.forEach((r: any) => {
             if (chartDataMap[r.receipt_date]) {
                 chartDataMap[r.receipt_date].revenue += (r.total_amount || 0);
             }
         });
 
-        weeklyPurchases.data?.forEach(r => {
+        weeklyPurchases.data?.forEach((r: any) => {
             if (chartDataMap[r.receipt_date]) {
                 chartDataMap[r.receipt_date].cost += (r.total_amount || 0);
             }
@@ -129,16 +129,16 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             supabase
                 .from('purchase_receipts')
                 .select(`
-                    id, 
-                    receipt_number,
-                    receipt_date, 
-                    total_amount,
-                    total_quantity_primary,
-                    warehouse:warehouses (name),
-                    creator:users!purchase_receipts_created_by_fkey(full_name),
-                    items:purchase_receipt_items(
-                        material:materials(name)
-                    )
+id,
+    receipt_number,
+    receipt_date,
+    total_amount,
+    total_quantity_primary,
+    warehouse: warehouses(name),
+        creator: users!purchase_receipts_created_by_fkey(full_name),
+            items: purchase_receipt_items(
+                material: materials(name)
+            )
                 `)
                 .is('deleted_at', null)
                 .order('created_at', { ascending: false })
@@ -146,29 +146,29 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             supabase
                 .from('export_receipts')
                 .select(`
-                    id, 
-                    receipt_number,
-                    receipt_date, 
-                    total_amount,
-                    quantity_secondary,
-                    vehicle:vehicles (plate_number),
-                    customer_name,
-                    creator:users!export_receipts_created_by_fkey(full_name),
-                    items:export_receipt_items(
-                        material:materials(name)
-                    )
+id,
+    receipt_number,
+    receipt_date,
+    total_amount,
+    quantity_secondary,
+    vehicle: vehicles(plate_number),
+        customer_name,
+        creator: users!export_receipts_created_by_fkey(full_name),
+            items: export_receipt_items(
+                material: materials(name)
+            )
                 `)
                 .is('deleted_at', null)
                 .order('created_at', { ascending: false })
                 .limit(5),
         ]);
 
-        const recentPurchases = recentPurchasesRes.data?.map(item => ({
+        const recentPurchases = recentPurchasesRes.data?.map((item: any) => ({
             ...item,
             material_summary: item.items?.map((i: any) => i.material?.name).join(', ') || 'N/A'
         })) || [];
 
-        const recentExports = recentExportsRes.data?.map(item => ({
+        const recentExports = recentExportsRes.data?.map((item: any) => ({
             ...item,
             material_summary: item.items?.map((i: any) => i.material?.name).join(', ') || 'N/A',
             total_quantity_secondary: item.quantity_secondary // map to the name frontend expects
@@ -235,22 +235,22 @@ router.get('/inventory', authorize('reports:read'), async (req: Request, res: Re
             const purchasesQuery = supabase
                 .from('purchase_receipts')
                 .select(`
-          warehouse_id,
-          warehouses!inner(id, code, name),
-          material_id,
-          materials!inner(id, code, name, primary_unit, secondary_unit),
-          quantity_primary,
-          quantity_secondary
-        `)
+warehouse_id,
+    warehouses!inner(id, code, name),
+        material_id,
+        materials!inner(id, code, name, primary_unit, secondary_unit),
+            quantity_primary,
+            quantity_secondary
+                `)
                 .is('deleted_at', null);
 
             const exportsQuery = supabase
                 .from('export_receipts')
                 .select(`
-          warehouse_id,
-          material_id,
-          quantity_primary,
-          quantity_secondary
+warehouse_id,
+    material_id,
+    quantity_primary,
+    quantity_secondary
         `)
                 .is('deleted_at', null);
 
@@ -271,7 +271,7 @@ router.get('/inventory', authorize('reports:read'), async (req: Request, res: Re
             }> = {};
 
             purchases.data?.forEach((p) => {
-                const key = `${p.warehouse_id}_${p.material_id}`;
+                const key = `${p.warehouse_id}_${p.material_id} `;
                 if (!inventory[key]) {
                     inventory[key] = {
                         warehouse_id: p.warehouse_id,
@@ -291,7 +291,7 @@ router.get('/inventory', authorize('reports:read'), async (req: Request, res: Re
             });
 
             exports.data?.forEach((e) => {
-                const key = `${e.warehouse_id}_${e.material_id}`;
+                const key = `${e.warehouse_id}_${e.material_id} `;
                 if (inventory[key]) {
                     inventory[key].stock_primary -= e.quantity_primary || 0;
                     inventory[key].stock_secondary -= e.quantity_secondary || 0;
@@ -317,7 +317,7 @@ router.get('/inventory', authorize('reports:read'), async (req: Request, res: Re
  * GET /api/reports/transport
  * Get transport/vehicle report
  */
-router.get('/transport', authorize('reports:read'), async (req: Request, res: Response, next) => {
+router.get('/transport', authorize('reports:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { from_date, to_date, vehicle_id } = req.query;
 
@@ -330,14 +330,14 @@ router.get('/transport', authorize('reports:read'), async (req: Request, res: Re
         let query = supabase
             .from('transport_logs')
             .select(`
-        *,
-        vehicle:vehicles (id, plate_number, driver_name),
-        export_receipt:export_receipts (
-          id,
-          receipt_number,
-          material:materials (id, name)
+    *,
+    vehicle: vehicles(id, plate_number, driver_name),
+        export_receipt: export_receipts(
+            id,
+            receipt_number,
+            material: materials(id, name)
         )
-      `)
+            `)
             .gte('created_at', from_date)
             .lte('created_at', to_date);
 
@@ -359,7 +359,7 @@ router.get('/transport', authorize('reports:read'), async (req: Request, res: Re
             total_distance_km: number;
         }> = {};
 
-        data?.forEach((log) => {
+        data?.forEach((log: any) => {
             const vid = log.vehicle_id;
             if (!vehicleSummary[vid]) {
                 vehicleSummary[vid] = {
@@ -393,7 +393,7 @@ router.get('/transport', authorize('reports:read'), async (req: Request, res: Re
  * GET /api/reports/project-profit
  * Get profit/loss by project
  */
-router.get('/project-profit', authorize('reports:read'), async (req: Request, res: Response, next) => {
+router.get('/project-profit', authorize('reports:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { from_date, to_date, project_id } = req.query;
 
@@ -437,7 +437,7 @@ router.get('/project-profit', authorize('reports:read'), async (req: Request, re
             profit_margin: number;
         }> = {};
 
-        purchases.data?.forEach((p) => {
+        purchases.data?.forEach((p: any) => {
             const pid = p.project_id;
             if (!projectStats[pid]) {
                 projectStats[pid] = {
@@ -453,7 +453,7 @@ router.get('/project-profit', authorize('reports:read'), async (req: Request, re
             projectStats[pid].total_purchase += p.total_amount || 0;
         });
 
-        exports.data?.forEach((e) => {
+        exports.data?.forEach((e: any) => {
             const pid = e.project_id;
             if (projectStats[pid]) {
                 projectStats[pid].total_export += e.total_amount || 0;

@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { getSupabaseClient } from '../database/supabase';
 import { authenticate, authorize } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
@@ -10,7 +10,7 @@ router.use(authenticate);
 /**
  * GET /api/warehouses
  */
-router.get('/', authorize('warehouses:read'), async (req: Request, res: Response, next) => {
+router.get('/', authorize('warehouses:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const {
             page = '1',
@@ -74,7 +74,7 @@ router.get('/', authorize('warehouses:read'), async (req: Request, res: Response
 /**
  * GET /api/warehouses/:id
  */
-router.get('/:id', authorize('warehouses:read'), async (req: Request, res: Response, next) => {
+router.get('/:id', authorize('warehouses:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();
@@ -102,7 +102,7 @@ router.get('/:id', authorize('warehouses:read'), async (req: Request, res: Respo
 /**
  * GET /api/warehouses/:id/inventory
  */
-router.get('/:id/inventory', authorize('warehouses:read'), async (req: Request, res: Response, next) => {
+router.get('/:id/inventory', authorize('warehouses:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();
@@ -136,7 +136,7 @@ router.get('/:id/inventory', authorize('warehouses:read'), async (req: Request, 
         const inventory: Record<string, { material: any, in: number, out: number, stock: number }> = {};
 
         // Init materials
-        materialsRes.data.forEach(m => {
+        materialsRes.data.forEach((m: any) => {
             inventory[m.id] = { material: m, in: 0, out: 0, stock: 0 };
         });
 
@@ -176,7 +176,7 @@ router.get('/:id/inventory', authorize('warehouses:read'), async (req: Request, 
 /**
  * POST /api/warehouses
  */
-router.post('/', authorize('warehouses:write'), async (req: Request, res: Response, next) => {
+router.post('/', authorize('warehouses:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { name, code, address, description, capacity, status } = req.body;
         if (!name) throw new AppError('Tên kho là bắt buộc', 400);
@@ -211,7 +211,7 @@ router.post('/', authorize('warehouses:write'), async (req: Request, res: Respon
 /**
  * PUT /api/warehouses/:id
  */
-router.put('/:id', authorize('warehouses:write'), async (req: Request, res: Response, next) => {
+router.put('/:id', authorize('warehouses:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const { name, code, address, description, capacity, status } = req.body;
@@ -234,7 +234,7 @@ router.put('/:id', authorize('warehouses:write'), async (req: Request, res: Resp
 /**
  * DELETE /api/warehouses/:id
  */
-router.delete('/:id', authorize('warehouses:delete'), async (req: Request, res: Response, next) => {
+router.delete('/:id', authorize('warehouses:delete'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();

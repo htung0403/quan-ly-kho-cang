@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { getSettings, updateSettings } from '../services/settingsService';
 
@@ -18,7 +18,7 @@ const upload = multer({
  * POST /api/settings/upload-logo
  * Upload company logo
  */
-router.post('/upload-logo', authenticate, authorize('admin'), upload.single('logo'), async (req: Request, res: Response, next) => {
+router.post('/upload-logo', authenticate, authorize('admin'), upload.single('logo'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (!req.file) {
             throw new AppError('Không có file nào được tải lên', 400);
@@ -60,7 +60,7 @@ router.post('/upload-logo', authenticate, authorize('admin'), upload.single('log
 
 
 // Get settings (accessible by authenticated users, or maybe public for printing?)
-router.get('/', authenticate, async (req: Request, res: Response, next) => {
+router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const settings = await getSettings();
         res.json({
@@ -73,7 +73,7 @@ router.get('/', authenticate, async (req: Request, res: Response, next) => {
 });
 
 // Update settings (Admin only)
-router.put('/', authenticate, authorize('admin'), async (req: Request, res: Response, next) => {
+router.put('/', authenticate, authorize('admin'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const updated = await updateSettings(req.body);
         res.json({

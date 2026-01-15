@@ -55,7 +55,7 @@ export const getSettings = async (): Promise<SystemSettings> => {
 
         // Map database keys back to camelCase properties
         Object.entries(KEY_MAPPING).forEach(([prop, dbKey]) => {
-            const item = data.find(d => d.key === dbKey);
+            const item = data.find((d: any) => d.key === dbKey);
             if (item) {
                 settings[prop] = item.value;
             }

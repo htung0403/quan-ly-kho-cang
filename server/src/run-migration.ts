@@ -16,7 +16,7 @@ async function run() {
         } else {
             console.log('Migration executed successfully.');
         }
-    } catch (e) {
+    } catch (e: any) {
         console.error('File error:', e);
     }
 }

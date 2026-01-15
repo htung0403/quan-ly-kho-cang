@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { getSupabaseClient } from '../database/supabase';
 import { authenticate, authorize } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
@@ -11,7 +11,7 @@ router.use(authenticate);
  * GET /api/vehicles
  * Lấy danh sách xe với phân trang và lọc
  */
-router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, next) => {
+router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const {
             page = '1',
@@ -68,7 +68,7 @@ router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, 
  * POST /api/vehicles
  * Thêm xe mới
  */
-router.post('/', authorize('vehicles:write'), async (req: Request, res: Response, next) => {
+router.post('/', authorize('vehicles:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { plate_number, driver_name, driver_phone, vehicle_type, capacity_tons, notes } = req.body;
 
@@ -121,7 +121,7 @@ router.post('/', authorize('vehicles:write'), async (req: Request, res: Response
  * PUT /api/vehicles/:id
  * Cập nhật thông tin xe
  */
-router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Response, next) => {
+router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const updateData = req.body;
@@ -153,7 +153,7 @@ router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Respon
  * DELETE /api/vehicles/:id
  * Xóa xe (soft delete)
  */
-router.delete('/:id', authorize('vehicles:delete'), async (req: Request, res: Response, next) => {
+router.delete('/:id', authorize('vehicles:delete'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();
