@@ -14,13 +14,41 @@ router.use(authenticate);
  */
 router.get('/', authorize('purchases:read'), async (req: Request, res: Response, next) => {
     try {
-        const { search = '', receipt_type, date_from, date_to, page = 1, limit = 10 } = req.query;
+        const { search = '', receipt_type, date_from, date_to, page = 1, limit = 50 } = req.query;
         const supabase = getSupabaseClient();
 
-        // Use the flat view for simplicity and accuracy
-        let query = supabase.from('v_purchase_items_detailed').select(`*`, { count: 'exact' });
+        // Chỉ select các fields cần thiết thay vì select * để tăng tốc
+        const selectFields = `
+            item_id,
+            receipt_id,
+            receipt_date,
+            material_code,
+            material_name,
+            supplier_name,
+            pickup_location,
+            delivery_location,
+            customer_name,
+            receipt_number,
+            vehicle_plate,
+            transport_unit,
+            quantity_tons,
+            density,
+            quantity_m3,
+            purchase_unit_price,
+            transport_unit_price,
+            sale_unit_price,
+            receipt_type,
+            total_amount,
+            created_at
+        `.replace(/\s+/g, '');
 
-        if (search) query = query.or(`receipt_number.ilike.%${search}%,quarry_name.ilike.%${search}%,supplier_name.ilike.%${search}%,material_name.ilike.%${search}%`);
+        let query = supabase.from('v_purchase_items_detailed').select(selectFields, { count: 'exact' });
+
+        // Search với index-friendly patterns
+        if (search) {
+            const searchTerm = `%${search}%`;
+            query = query.or(`receipt_number.ilike.${searchTerm},material_name.ilike.${searchTerm},material_code.ilike.${searchTerm},vehicle_plate.ilike.${searchTerm}`);
+        }
         if (receipt_type) query = query.eq('receipt_type', receipt_type);
         if (date_from) query = query.gte('receipt_date', date_from);
         if (date_to) query = query.lte('receipt_date', date_to);
@@ -241,6 +269,177 @@ router.get('/:receiptId/transport', authorize('purchases:read'), async (req: Req
 });
 
 // ... (Các routes DELETE, v.v. giữ nguyên)
+
+/**
+ * DELETE /api/purchases/v2/:id
+ * Xóa phiếu nhập (soft delete)
+ */
+router.delete('/:id', authorize('purchases:delete'), async (req: Request, res: Response, next) => {
+    try {
+        const { id } = req.params;
+        const supabase = getSupabaseClient();
+
+        // Kiểm tra phiếu tồn tại
+        const { data: receipt, error: checkError } = await supabase
+            .from('purchase_receipt_headers')
+            .select('id, receipt_number')
+            .eq('id', id)
+            .is('deleted_at', null)
+            .single();
+
+        if (checkError || !receipt) {
+            throw new AppError('Không tìm thấy phiếu nhập', 404);
+        }
+
+        // Soft delete - chỉ đánh dấu deleted_at
+        const { error } = await supabase
+            .from('purchase_receipt_headers')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) throw new AppError(error.message, 500);
+
+        res.json({ success: true, message: `Đã xóa phiếu ${receipt.receipt_number}` });
+    } catch (error) { next(error); }
+});
+
+/**
+ * PUT /api/purchases/v2/:id
+ * Cập nhật phiếu nhập
+ */
+router.put('/:id', authorize('purchases:write'), async (req: Request, res: Response, next) => {
+    try {
+        const { id } = req.params;
+        const {
+            receipt_date,
+            notes,
+            items,
+            direct_to_site_details,
+            warehouse_import_details
+        } = req.body;
+
+        const supabase = getSupabaseClient();
+
+        // Kiểm tra phiếu tồn tại
+        const { data: receipt, error: checkError } = await supabase
+            .from('purchase_receipt_headers')
+            .select('id, receipt_type, receipt_number')
+            .eq('id', id)
+            .is('deleted_at', null)
+            .single();
+
+        if (checkError || !receipt) {
+            throw new AppError('Không tìm thấy phiếu nhập', 404);
+        }
+
+        // Cập nhật header
+        const { error: headerError } = await supabase
+            .from('purchase_receipt_headers')
+            .update({
+                receipt_date: receipt_date || undefined,
+                notes: notes || undefined,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', id);
+
+        if (headerError) throw new AppError(headerError.message, 500);
+
+        // Cập nhật details theo loại phiếu
+        if (receipt.receipt_type === 'direct_to_site' && direct_to_site_details) {
+            await supabase
+                .from('direct_to_site_details')
+                .update({
+                    quarry_name: direct_to_site_details.quarry_name,
+                    supplier_name: direct_to_site_details.supplier_name,
+                    supplier_phone: direct_to_site_details.supplier_phone,
+                    destination_site: direct_to_site_details.destination_site,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('receipt_id', id);
+        } else if (receipt.receipt_type === 'warehouse_import' && warehouse_import_details) {
+            await supabase
+                .from('warehouse_import_details')
+                .update({
+                    warehouse_id: warehouse_import_details.warehouse_id,
+                    project_id: warehouse_import_details.project_id,
+                    supplier_name: warehouse_import_details.supplier_name,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('receipt_id', id);
+        }
+
+        // Cập nhật items nếu có
+        if (items && Array.isArray(items) && items.length > 0) {
+            // Xóa items cũ
+            await supabase.from('purchase_receipt_items_v2').delete().eq('receipt_id', id);
+
+            // Thêm items mới
+            let totalAmount = 0, totalQtyP = 0, totalQtyS = 0;
+            const itemsToInsert = [];
+
+            for (const item of items) {
+                const { data: mat } = await supabase
+                    .from('materials')
+                    .select('current_density')
+                    .eq('id', item.material_id)
+                    .single();
+
+                const density = parseFloat(mat?.current_density as any) || 1;
+                const qp = parseFloat(item.quantity_primary?.toString() || '0');
+                const unitPrice = parseFloat(item.unit_price?.toString() || '0');
+                const qs = qp / density;
+                const subtotal = qp * unitPrice;
+
+                itemsToInsert.push({
+                    receipt_id: id,
+                    material_id: item.material_id,
+                    quantity_primary: qp,
+                    quantity_secondary: qs,
+                    density_used: density,
+                    unit_price: unitPrice,
+                    total_amount: subtotal,
+                    notes: item.notes || ''
+                });
+
+                totalAmount += subtotal;
+                totalQtyP += qp;
+                totalQtyS += qs;
+            }
+
+            await supabase.from('purchase_receipt_items_v2').insert(itemsToInsert);
+
+            // Cập nhật totals
+            await supabase.from('purchase_receipt_headers').update({
+                total_amount: totalAmount,
+                total_quantity_primary: totalQtyP,
+                total_quantity_secondary: totalQtyS
+            }).eq('id', id);
+        }
+
+        res.json({ success: true, message: `Cập nhật phiếu ${receipt.receipt_number} thành công` });
+    } catch (error) { next(error); }
+});
+
+/**
+ * DELETE /api/purchases/v2/:receiptId/transport/:transportId
+ * Xóa thông tin vận chuyển
+ */
+router.delete('/:receiptId/transport/:transportId', authorize('purchases:delete'), async (req: Request, res: Response, next) => {
+    try {
+        const { receiptId, transportId } = req.params;
+        const supabase = getSupabaseClient();
+
+        const { error } = await supabase
+            .from('transport_records')
+            .delete()
+            .eq('id', transportId)
+            .eq('receipt_id', receiptId);
+
+        if (error) throw new AppError(error.message, 500);
+
+        res.json({ success: true, message: 'Đã xóa thông tin vận chuyển' });
+    } catch (error) { next(error); }
+});
 
 /**
  * GET /api/purchases/v2/:id (Chi tiết phiếu)

@@ -6,6 +6,7 @@ export { WarehouseDetailPage } from './WarehouseDetailPage';
 export { PurchasesPage } from './PurchasesPage';
 export { PurchaseFormPage } from './PurchaseFormPage';
 export { PurchaseDetailPage } from './PurchaseDetailPage';
+export { PurchaseEditPage } from './PurchaseEditPage';
 export { ExportsPage } from './ExportsPage';
 export { ExportFormPage } from './ExportFormPage';
 export { ExportDetailPage } from './ExportDetailPage';

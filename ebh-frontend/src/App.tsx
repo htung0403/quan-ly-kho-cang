@@ -13,6 +13,7 @@ import {
   PurchasesPage,
   PurchaseFormPage,
   PurchaseDetailPage,
+  PurchaseEditPage,
   ExportsPage,
   ExportFormPage,
   ExportDetailPage,
@@ -110,6 +111,7 @@ function AppRoutes() {
         <Route path="purchases" element={<PurchasesPage />} />
         <Route path="purchases/new" element={<PurchaseFormPage />} />
         <Route path="purchases/:id" element={<PurchaseDetailPage />} />
+        <Route path="purchases/:id/edit" element={<PurchaseEditPage />} />
 
         {/* Transactions - Exports */}
         <Route path="exports" element={<ExportsPage />} />

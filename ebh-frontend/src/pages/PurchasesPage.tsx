@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
     Plus, Package, Warehouse, Truck, Eye, Trash2, Search, Filter,
     Calendar, DollarSign, ChevronLeft, ChevronRight, FileText,
-    Sparkles, X, RefreshCw
+    Sparkles, X, RefreshCw, MapPin, User, Hash, Edit2
 } from 'lucide-react';
 import {
     Card,
@@ -16,21 +16,29 @@ import { api } from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDate, formatCurrency, formatNumber } from '@/lib/utils';
 
+// Interface cập nhật với đầy đủ 16 cột theo yêu cầu
 interface PurchaseReceiptV2 {
     item_id: string;
     receipt_id: string;
     receipt_number: string;
     receipt_type: 'direct_to_site' | 'warehouse_import';
-    receipt_date: string;
-    quarry_name: string;
-    supplier_name: string;
-    material_name: string;
-    quantity_primary: number | null;   // Tấn
-    quantity_secondary: number | null; // Khối
-    unit_price: number | null;
+    receipt_date: string;              // 1. Ngày
+    material_code: string;             // 2. Mã SP
+    material_name: string;             // 3. Tên sản phẩm
+    supplier_name: string;             // 4. Tên NCC
+    pickup_location: string;           // 5. Nơi lấy hàng
+    delivery_location: string;         // 6. Nơi giao hàng
+    customer_name: string;             // 7. Tên Khách hàng
+    vehicle_plate: string;             // 9. Số xe
+    transport_unit: string;            // 10. ĐV Vận chuyển
+    quantity_tons: number | null;      // 11. KL Tấn
+    density: number | null;            // 12. Tỷ trọng
+    quantity_m3: number | null;        // 13. KL m3
+    purchase_unit_price: number | null; // 14. Đơn giá - Sản phẩm NHẬP
+    transport_unit_price: number | null; // 15. Đơn giá - Vận chuyển
+    sale_unit_price: number | null;    // 16. Đơn giá - Sản phẩm BÁN
     total_amount: number | null;
     created_by_name: string;
-    vehicle_plate?: string;
 }
 
 const RECEIPT_TYPES = [
@@ -49,7 +57,7 @@ export function PurchasesPage() {
     const [receipts, setReceipts] = useState<PurchaseReceiptV2[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
-    const [limit] = useState(10);
+    const [limit] = useState(50); // Tăng limit để giảm số lần phân trang
 
     // Filters
     const [filters, setFilters] = useState<{
@@ -64,6 +72,16 @@ export function PurchasesPage() {
         date_to: ''
     });
 
+    // Debounce search để không gọi API liên tục khi gõ
+    const [debouncedFilters, setDebouncedFilters] = useState(filters);
+    
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedFilters(filters);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [filters]);
+
     const fetchReceipts = useCallback(async () => {
         setIsLoading(true);
         try {
@@ -77,14 +95,14 @@ export function PurchasesPage() {
             } = {
                 page,
                 limit,
-                search: filters.search,
-                date_from: filters.date_from,
-                date_to: filters.date_to
+                search: debouncedFilters.search,
+                date_from: debouncedFilters.date_from,
+                date_to: debouncedFilters.date_to
             };
 
             // Only add receipt_type if it's not empty string and is a valid API type
-            if (filters.receipt_type && filters.receipt_type !== 'transport_log') {
-                params.receipt_type = filters.receipt_type;
+            if (debouncedFilters.receipt_type && debouncedFilters.receipt_type !== 'transport_log') {
+                params.receipt_type = debouncedFilters.receipt_type;
             }
 
             const res = await api.purchases.getAll(params) as unknown as { success: boolean; data: { items: PurchaseReceiptV2[]; total: number } };
@@ -98,11 +116,11 @@ export function PurchasesPage() {
         } finally {
             setIsLoading(false);
         }
-    }, [page, limit, filters, error]);
+    }, [page, limit, debouncedFilters, error]);
 
     useEffect(() => {
         fetchReceipts();
-    }, [page, filters]);
+    }, [page, debouncedFilters, fetchReceipts]);
 
     const handleDelete = async (id: string, receiptNumber: string) => {
         if (!confirm(`Bạn có chắc muốn xóa TOÀN BỘ phiếu ${receiptNumber}?`)) return;
@@ -133,16 +151,20 @@ export function PurchasesPage() {
         setPage(1);
     };
 
-
-    const totalPages = Math.ceil(total / limit);
-
-    // Calculate stats
-    const stats = {
-        directToSite: receipts.filter(r => r.receipt_type === 'direct_to_site').length,
-        warehouseImport: receipts.filter(r => r.receipt_type === 'warehouse_import').length,
-        totalValue: receipts.reduce((sum, r) => sum + (r.total_amount || 0), 0),
-        totalQuantity: receipts.reduce((sum, r) => sum + (r.quantity_primary || 0), 0)
-    };
+    // Memo hóa các tính toán để tránh tính lại không cần thiết
+    const { uniqueReceiptCount, stats, totalPages } = useMemo(() => {
+        const uniqueIds = [...new Set(receipts.map(r => r.receipt_id))];
+        return {
+            uniqueReceiptCount: uniqueIds.length,
+            totalPages: Math.ceil(total / limit),
+            stats: {
+                directToSite: [...new Set(receipts.filter(r => r.receipt_type === 'direct_to_site').map(r => r.receipt_id))].length,
+                warehouseImport: [...new Set(receipts.filter(r => r.receipt_type === 'warehouse_import').map(r => r.receipt_id))].length,
+                totalValue: receipts.reduce((sum, r) => sum + (r.total_amount || 0), 0),
+                totalQuantity: receipts.reduce((sum, r) => sum + (r.quantity_tons || 0), 0)
+            }
+        };
+    }, [receipts, total, limit]);
 
     return (
         <div className="space-y-6 animate-fade-in pb-8">
@@ -313,7 +335,7 @@ export function PurchasesPage() {
                         <FileText className="w-4 h-4" />
                         Danh sách phiếu nhập
                         <span className="ml-2 px-2 py-0.5 bg-white/20 rounded-full text-xs">
-                            {total} phiếu
+                            {uniqueReceiptCount} phiếu (trang này)
                         </span>
                     </h3>
                 </div>
@@ -340,23 +362,46 @@ export function PurchasesPage() {
                     ) : (
                         <>
                             <div className="overflow-x-auto">
-                                <table className="w-full">
-                                    <thead className="bg-slate-50 border-b-2 border-slate-200">
+                                <table className="w-full min-w-[1800px]">
+                                    <thead className="bg-gradient-to-r from-slate-100 to-slate-50 border-b-2 border-slate-200 sticky top-0">
                                         <tr>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">STT</th>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Ngày</th>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Kho/Công trình</th>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Nhà cung cấp</th>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Số phiếu</th>
-                                            <th className="px-4 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Vật tư</th>
-                                            <th className="px-4 py-4 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Tấn</th>
-                                            <th className="px-4 py-4 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">m³</th>
-                                            <th className="px-4 py-4 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Đơn giá</th>
-                                            <th className="px-4 py-4 text-right text-xs font-bold text-primary-600 uppercase tracking-wider">Thành tiền</th>
-                                            <th className="px-4 py-4 text-center text-xs font-bold text-slate-600 uppercase tracking-wider w-24">Thao tác</th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">STT</th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Ngày</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><Hash className="w-3 h-3" /> Mã SP</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><Package className="w-3 h-3" /> Tên SP</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">Tên NCC</th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Nơi lấy</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Nơi giao</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><User className="w-3 h-3" /> Khách hàng</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-primary-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><FileText className="w-3 h-3" /> Số phiếu</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                                                <div className="flex items-center gap-1"><Truck className="w-3 h-3" /> Số xe</div>
+                                            </th>
+                                            <th className="px-3 py-3 text-left text-[10px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">ĐV Vận chuyển</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-orange-600 uppercase tracking-wider whitespace-nowrap">KL Tấn</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tỷ trọng</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-blue-600 uppercase tracking-wider whitespace-nowrap">KL m³</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-green-600 uppercase tracking-wider whitespace-nowrap">ĐG Nhập</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-amber-600 uppercase tracking-wider whitespace-nowrap">ĐG VC</th>
+                                            <th className="px-3 py-3 text-right text-[10px] font-bold text-purple-600 uppercase tracking-wider whitespace-nowrap">ĐG Bán</th>
+                                            <th className="px-3 py-3 text-center text-[10px] font-bold text-slate-600 uppercase tracking-wider w-24 sticky right-0 bg-gradient-to-r from-slate-100 to-slate-50 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)]">TT</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100">
+                                    <tbody className="divide-y divide-slate-100 bg-white">
                                         {(() => {
                                             let currentReceiptId = '';
                                             let rowIndex = 0;
@@ -368,83 +413,115 @@ export function PurchasesPage() {
                                                 }
                                                 
                                                 const receiptTypeColor = receipt.receipt_type === 'direct_to_site' 
-                                                    ? 'bg-green-100 text-green-700' 
-                                                    : 'bg-blue-100 text-blue-700';
+                                                    ? 'bg-green-100 text-green-700 border-green-200' 
+                                                    : 'bg-blue-100 text-blue-700 border-blue-200';
                                                 
                                                 return (
                                                     <tr 
                                                         key={receipt.item_id} 
-                                                        className={`hover:bg-slate-50/80 transition-colors ${
-                                                            isNewReceipt ? 'border-t-2 border-slate-200' : ''
+                                                        className={`hover:bg-primary-50/50 transition-colors ${
+                                                            isNewReceipt ? 'border-t-2 border-slate-300' : ''
                                                         }`}
                                                     >
-                                                        <td className="px-4 py-3 text-sm text-slate-400 font-medium">
-                                                            {isNewReceipt ? (page - 1) * limit + rowIndex : ''}
+                                                        {/* 0. STT - chỉ đếm trong trang hiện tại */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-400 font-medium">
+                                                            {isNewReceipt ? rowIndex : ''}
                                                         </td>
-                                                        <td className="px-4 py-3 text-sm text-slate-600">
-                                                            {isNewReceipt ? formatDate(receipt.receipt_date) : ''}
+                                                        {/* 1. Ngày */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 whitespace-nowrap">
+                                                            {formatDate(receipt.receipt_date)}
                                                         </td>
-                                                        <td className="px-4 py-3 text-sm">
-                                                            {isNewReceipt && receipt.quarry_name && (
-                                                                <span className="font-medium text-slate-800">{receipt.quarry_name}</span>
-                                                            )}
+                                                        {/* 2. Mã SP */}
+                                                        <td className="px-3 py-2.5">
+                                                            <span className="text-xs font-mono font-bold text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded">
+                                                                {receipt.material_code}
+                                                            </span>
                                                         </td>
-                                                        <td className="px-4 py-3 text-sm">
-                                                            {isNewReceipt && receipt.supplier_name && (
-                                                                <span className="text-slate-600">{receipt.supplier_name}</span>
-                                                            )}
+                                                        {/* 3. Tên sản phẩm */}
+                                                        <td className="px-3 py-2.5 text-xs font-medium text-slate-800 max-w-[150px] truncate" title={receipt.material_name}>
+                                                            {receipt.material_name}
                                                         </td>
-                                                        <td className="px-4 py-3">
+                                                        {/* 4. Tên NCC */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 max-w-[120px] truncate" title={receipt.supplier_name}>
+                                                            {receipt.supplier_name !== '---' ? receipt.supplier_name : <span className="text-slate-300">—</span>}
+                                                        </td>
+                                                        {/* 5. Nơi lấy hàng */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 max-w-[120px] truncate" title={receipt.pickup_location}>
+                                                            {receipt.pickup_location !== '---' ? receipt.pickup_location : <span className="text-slate-300">—</span>}
+                                                        </td>
+                                                        {/* 6. Nơi giao hàng */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 max-w-[120px] truncate" title={receipt.delivery_location}>
+                                                            {receipt.delivery_location !== '---' ? receipt.delivery_location : <span className="text-slate-300">—</span>}
+                                                        </td>
+                                                        {/* 7. Tên Khách hàng */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 max-w-[100px] truncate" title={receipt.customer_name}>
+                                                            {receipt.customer_name !== '---' ? receipt.customer_name : <span className="text-slate-300">—</span>}
+                                                        </td>
+                                                        {/* 8. Số phiếu */}
+                                                        <td className="px-3 py-2.5">
                                                             {isNewReceipt && (
-                                                                <div>
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${receiptTypeColor}`}>
-                                                                            {receipt.receipt_type === 'direct_to_site' ? 'XTT' : 'NK'}
-                                                                        </span>
-                                                                        <span className="font-mono font-bold text-slate-900">{receipt.receipt_number}</span>
-                                                                    </div>
-                                                                    {receipt.vehicle_plate && (
-                                                                        <div className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                                                                            <Truck className="w-3 h-3" /> {receipt.vehicle_plate}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
+                                                                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border ${receiptTypeColor}`}>
+                                                                    {receipt.receipt_type === 'direct_to_site' ? 'XTT' : 'NK'}
+                                                                    <span className="font-mono">{receipt.receipt_number}</span>
+                                                                </span>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <Package className="w-4 h-4 text-primary-400" />
-                                                                <span className="text-sm font-medium text-slate-800">{receipt.material_name}</span>
-                                                            </div>
+                                                        {/* 9. Số xe */}
+                                                        <td className="px-3 py-2.5 text-xs font-mono text-slate-700">
+                                                            {receipt.vehicle_plate !== '---' ? receipt.vehicle_plate : <span className="text-slate-300">—</span>}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right">
-                                                            <span className="text-sm font-bold text-slate-900">{formatNumber(receipt.quantity_primary || 0, 2)}</span>
+                                                        {/* 10. ĐV Vận chuyển */}
+                                                        <td className="px-3 py-2.5 text-xs text-slate-600 max-w-[100px] truncate" title={receipt.transport_unit}>
+                                                            {receipt.transport_unit !== '---' ? receipt.transport_unit : <span className="text-slate-300">—</span>}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right">
-                                                            <span className="text-sm text-slate-400">{formatNumber(receipt.quantity_secondary || 0, 2)}</span>
+                                                        {/* 11. KL Tấn */}
+                                                        <td className="px-3 py-2.5 text-right">
+                                                            <span className="text-xs font-bold text-orange-600">{formatNumber(receipt.quantity_tons || 0, 2)}</span>
                                                         </td>
-                                                        <td className="px-4 py-3 text-right text-sm text-slate-600">
-                                                            {formatCurrency(receipt.unit_price || 0)}
+                                                        {/* 12. Tỷ trọng */}
+                                                        <td className="px-3 py-2.5 text-right text-xs text-slate-500">
+                                                            {formatNumber(receipt.density || 1, 2)}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right">
-                                                            <span className="font-bold text-primary-600">{formatCurrency(receipt.total_amount || 0)}</span>
+                                                        {/* 13. KL m3 */}
+                                                        <td className="px-3 py-2.5 text-right">
+                                                            <span className="text-xs font-medium text-blue-600">{formatNumber(receipt.quantity_m3 || 0, 2)}</span>
                                                         </td>
-                                                        <td className="px-4 py-3">
+                                                        {/* 14. Đơn giá - Sản phẩm NHẬP */}
+                                                        <td className="px-3 py-2.5 text-right text-xs text-green-600 font-medium">
+                                                            {formatCurrency(receipt.purchase_unit_price || 0)}
+                                                        </td>
+                                                        {/* 15. Đơn giá - Vận chuyển */}
+                                                        <td className="px-3 py-2.5 text-right text-xs text-amber-600">
+                                                            {formatCurrency(receipt.transport_unit_price || 0)}
+                                                        </td>
+                                                        {/* 16. Đơn giá - Sản phẩm BÁN */}
+                                                        <td className="px-3 py-2.5 text-right text-xs text-purple-600 font-medium">
+                                                            {formatCurrency(receipt.sale_unit_price || 0)}
+                                                        </td>
+                                                        {/* Actions - Sticky right */}
+                                                        <td className="px-3 py-2.5 sticky right-0 bg-white shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)]">
                                                             {isNewReceipt && (
-                                                                <div className="flex items-center justify-center gap-1">
+                                                                <div className="flex items-center justify-center gap-0.5">
                                                                     <button
                                                                         onClick={() => navigate(`/purchases/${receipt.receipt_id}`)}
-                                                                        className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all hover:scale-110"
+                                                                        className="p-1.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
                                                                         title="Xem chi tiết"
                                                                     >
-                                                                        <Eye className="w-4 h-4" />
+                                                                        <Eye className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => navigate(`/purchases/${receipt.receipt_id}/edit`)}
+                                                                        className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                                                        title="Sửa phiếu"
+                                                                    >
+                                                                        <Edit2 className="w-3.5 h-3.5" />
                                                                     </button>
                                                                     <button
                                                                         onClick={() => handleDelete(receipt.receipt_id, receipt.receipt_number)}
-                                                                        className="p-2 text-slate-400 hover:text-danger-600 hover:bg-danger-50 rounded-lg transition-all hover:scale-110"
+                                                                        className="p-1.5 text-slate-400 hover:text-danger-600 hover:bg-danger-50 rounded-lg transition-all"
                                                                         title="Xóa phiếu"
                                                                     >
-                                                                        <Trash2 className="w-4 h-4" />
+                                                                        <Trash2 className="w-3.5 h-3.5" />
                                                                     </button>
                                                                 </div>
                                                             )}
@@ -460,13 +537,12 @@ export function PurchasesPage() {
                             {/* Modern Pagination */}
                             <div className="px-6 py-4 border-t border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                    <span className="text-sm text-slate-500">Hiển thị</span>
+                                    <span className="text-sm text-slate-500">Trang {page}/{totalPages}</span>
                                     <span className="px-2 py-1 bg-primary-100 text-primary-700 rounded-lg font-bold text-sm">
-                                        {(page - 1) * limit + 1} - {Math.min(page * limit, total)}
+                                        {uniqueReceiptCount} phiếu
                                     </span>
-                                    <span className="text-sm text-slate-500">trong tổng số</span>
-                                    <span className="font-bold text-slate-700">{total}</span>
-                                    <span className="text-sm text-slate-500">phiếu</span>
+                                    <span className="text-sm text-slate-500">|</span>
+                                    <span className="text-sm text-slate-500">{receipts.length} dòng vật tư</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button

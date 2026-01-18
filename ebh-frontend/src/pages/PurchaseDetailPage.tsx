@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
     ArrowLeft, Printer, Truck, Plus, X, Trash2, Package, Calendar,
     FileText, User, MapPin, Building2, Hash, Scale, CheckCircle2,
-    AlertCircle, Warehouse
+    AlertCircle, Warehouse, Edit2
 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import {
@@ -183,6 +183,21 @@ export function PurchaseDetailPage() {
         }
     };
 
+    const handleDeleteReceipt = async () => {
+        if (!receipt) return;
+        if (!confirm(`Bạn có chắc muốn xóa phiếu ${receipt.receipt_number}? Hành động này không thể hoàn tác.`)) return;
+
+        try {
+            const res = await api.purchases.delete(id!) as any;
+            if (res.success) {
+                success('Đã xóa phiếu thành công');
+                navigate('/purchases');
+            }
+        } catch (err: any) {
+            error(err.message || 'Không thể xóa phiếu');
+        }
+    };
+
     if (isLoading || !receipt) return (
         <div className="flex items-center justify-center py-20">
             <div className="text-center">
@@ -262,11 +277,27 @@ export function PurchaseDetailPage() {
                     <div className="flex items-center gap-3">
                         <Button 
                             variant="secondary" 
+                            onClick={() => navigate(`/purchases/${id}/edit`)} 
+                            leftIcon={<Edit2 className="w-4 h-4" />}
+                            className="bg-white/10 hover:bg-white/20 border-white/20 text-white"
+                        >
+                            Sửa
+                        </Button>
+                        <Button 
+                            variant="secondary" 
                             onClick={() => handlePrint()} 
                             leftIcon={<Printer className="w-4 h-4" />}
                             className="bg-white/10 hover:bg-white/20 border-white/20 text-white"
                         >
                             In phiếu
+                        </Button>
+                        <Button 
+                            variant="danger" 
+                            onClick={handleDeleteReceipt} 
+                            leftIcon={<Trash2 className="w-4 h-4" />}
+                            className="bg-red-500/20 hover:bg-red-500/30 border-red-500/30 text-red-300"
+                        >
+                            Xóa
                         </Button>
                     </div>
                 </div>

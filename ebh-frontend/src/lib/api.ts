@@ -293,6 +293,28 @@ export const purchasesApi = {
     delete: (id: string) =>
         apiClient.delete(`/purchases/v2/${id}`),
 
+    update: (id: string, data: {
+        receipt_date?: string;
+        notes?: string;
+        items?: Array<{
+            material_id: string;
+            quantity_primary: number;
+            unit_price: number;
+            notes?: string;
+        }>;
+        direct_to_site_details?: {
+            quarry_name?: string;
+            supplier_name?: string;
+            supplier_phone?: string;
+            destination_site?: string;
+        };
+        warehouse_import_details?: {
+            warehouse_id?: string;
+            project_id?: string;
+            supplier_name?: string;
+        };
+    }) => apiClient.put(`/purchases/v2/${id}`, data),
+
     // Transport Records (linked to purchase receipts)
     getTransportRecords: (receiptId: string) =>
         apiClient.get(`/purchases/v2/${receiptId}/transport`),
