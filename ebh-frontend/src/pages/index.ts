@@ -14,4 +14,5 @@ export { ProjectsPage } from './ProjectsPage';
 export { UsersPage } from './UsersPage';
 export { SettingsPage } from './SettingsPage';
 export { InventoryReportPage } from './InventoryReportPage';
+export { TransportReportPage } from './TransportReportPage';
 

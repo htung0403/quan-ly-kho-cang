@@ -17,6 +17,8 @@ interface TableProps<T> {
     isLoading?: boolean;
     emptyMessage?: string;
     className?: string;
+    renderExpandedRow?: (item: T) => React.ReactNode;
+    isRowExpanded?: (item: T) => boolean;
 }
 
 function Table<T extends Record<string, unknown>>({
@@ -26,6 +28,8 @@ function Table<T extends Record<string, unknown>>({
     isLoading = false,
     emptyMessage = 'Không có dữ liệu',
     className,
+    renderExpandedRow,
+    isRowExpanded
 }: TableProps<T>) {
     if (isLoading) {
         return (
@@ -74,21 +78,37 @@ function Table<T extends Record<string, unknown>>({
                     </tr>
                 </thead>
                 <tbody>
-                    {data.map((item, index) => (
-                        <tr
-                            key={index}
-                            onClick={() => onRowClick?.(item)}
-                            className={onRowClick ? 'cursor-pointer' : ''}
-                        >
-                            {columns.map((column) => (
-                                <td key={column.key} className={column.className}>
-                                    {column.cell
-                                        ? column.cell(item, index)
-                                        : (item[column.key] as React.ReactNode)}
-                                </td>
-                            ))}
-                        </tr>
-                    ))}
+                    {data.map((item, index) => {
+                        const expanded = isRowExpanded?.(item);
+                        return (
+                            <React.Fragment key={index}>
+                                <tr
+                                    onClick={() => onRowClick?.(item)}
+                                    className={cn(
+                                        onRowClick ? 'cursor-pointer' : '',
+                                        expanded ? 'bg-slate-50' : ''
+                                    )}
+                                >
+                                    {columns.map((column) => (
+                                        <td key={column.key} className={column.className}>
+                                            {column.cell
+                                                ? column.cell(item, index)
+                                                : (item[column.key] as React.ReactNode)}
+                                        </td>
+                                    ))}
+                                </tr>
+                                {expanded && renderExpandedRow && (
+                                    <tr className="bg-slate-50/50">
+                                        <td colSpan={columns.length} className="p-0 border-t-0">
+                                            <div className="animate-in slide-in-from-top-2 duration-200">
+                                                {renderExpandedRow(item)}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>

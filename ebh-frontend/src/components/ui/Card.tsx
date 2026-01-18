@@ -20,11 +20,22 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
 
 Card.displayName = 'Card';
 
-interface CardHeaderProps extends React.HTMLAttributes<HTMLDivElement> { }
+interface CardHeaderProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
+    title?: React.ReactNode;
+    description?: React.ReactNode;
+    action?: React.ReactNode;
+}
 
 const CardHeader = React.forwardRef<HTMLDivElement, CardHeaderProps>(
-    ({ className, ...props }, ref) => (
-        <div ref={ref} className={cn('px-6 py-4 border-b border-slate-100', className)} {...props} />
+    ({ className, title, description, action, children, ...props }, ref) => (
+        <div ref={ref} className={cn('px-6 py-4 border-b border-slate-100 flex items-center justify-between', className)} {...props}>
+            <div className="flex-1">
+                {title && <h3 className="text-lg font-semibold text-slate-900">{title}</h3>}
+                {description && <p className="text-sm text-slate-500 mt-1">{description}</p>}
+                {children}
+            </div>
+            {action && <div className="ml-4 flex-shrink-0">{action}</div>}
+        </div>
     )
 );
 

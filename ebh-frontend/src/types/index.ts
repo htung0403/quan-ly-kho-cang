@@ -137,6 +137,22 @@ export interface Warehouse {
     manager?: User;
 }
 
+// Transport Unit types
+export interface TransportUnit {
+    id: string;
+    name: string;
+    contact_name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    notes?: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+    deleted_at?: string;
+    vehicles?: Vehicle[];
+}
+
 // Vehicle types
 export interface Vehicle {
     id: string;
@@ -147,6 +163,8 @@ export interface Vehicle {
     vehicle_type?: string;
     status: VehicleStatus;
     notes?: string;
+    transport_unit_id?: string;
+    transport_unit?: { id: string; name: string };
     is_active: boolean;
     created_at: string;
     updated_at: string;

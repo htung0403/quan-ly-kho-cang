@@ -13,35 +13,8 @@ import {
 import { api } from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
 import { formatNumber, formatCurrency } from '@/lib/utils';
+import { Material, Warehouse as WarehouseType, Project, Vehicle, TransportUnit } from '@/types';
 import { PrintExportReceipt } from '@/components/PrintExportReceipt';
-
-interface Material {
-    id: string;
-    code: string;
-    name: string;
-    primary_unit: string;
-    secondary_unit: string;
-    current_density: number;
-    sale_price?: number;
-}
-
-interface Warehouse {
-    id: string;
-    name: string;
-}
-
-interface Project {
-    id: string;
-    name: string;
-    code: string;
-}
-
-interface Vehicle {
-    id: string;
-    plate_number: string;
-    driver_name?: string;
-    capacity_tons?: number;
-}
 
 interface ExportItem {
     material_id: string;
@@ -59,6 +32,7 @@ interface FormData {
     warehouse_id: string;
     project_id: string;
     vehicle_id: string;
+    transport_unit_id: string;
     customer_name: string;
     customer_phone: string;
     destination: string;
@@ -78,16 +52,18 @@ export function ExportFormPage() {
     const [createdReceipt, setCreatedReceipt] = useState<any>(null);
 
     // Options for selects
-    const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+    const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
     const [materials, setMaterials] = useState<Material[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+    const [transportUnits, setTransportUnits] = useState<TransportUnit[]>([]);
 
     // Form data
     const [formData, setFormData] = useState<FormData>({
         warehouse_id: '',
         project_id: '',
         vehicle_id: '',
+        transport_unit_id: '',
         customer_name: '',
         customer_phone: '',
         destination: '',
@@ -119,11 +95,12 @@ export function ExportFormPage() {
     const fetchOptions = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [warehousesRes, materialsRes, projectsRes, vehiclesRes] = await Promise.all([
+            const [warehousesRes, materialsRes, projectsRes, vehiclesRes, transportUnitsRes] = await Promise.all([
                 api.warehouses.getAll(),
                 api.materials.getAll({ limit: 100 }),
                 api.projects.getAll({ limit: 100 }),
-                api.vehicles.getAll({ limit: 100 })
+                api.vehicles.getAll({ limit: 100 }),
+                api.transportUnits.getAll({ limit: 100 })
             ]) as any[];
 
             // Updated logic to handle pagination structure or flat array safely
@@ -131,6 +108,7 @@ export function ExportFormPage() {
             if (materialsRes.success) setMaterials(Array.isArray(materialsRes.data) ? materialsRes.data : materialsRes.data.items || []);
             if (projectsRes.success) setProjects(Array.isArray(projectsRes.data) ? projectsRes.data : projectsRes.data.items || []);
             if (vehiclesRes.success) setVehicles(Array.isArray(vehiclesRes.data) ? vehiclesRes.data : vehiclesRes.data.items || []);
+            if (transportUnitsRes.success) setTransportUnits(Array.isArray(transportUnitsRes.data) ? transportUnitsRes.data : transportUnitsRes.data.items || []);
         } catch (err) {
             console.error(err);
             error('Không thể tải dữ liệu');
@@ -312,6 +290,7 @@ export function ExportFormPage() {
                                 customer_phone: '',
                                 destination: '',
                                 receipt_date: new Date().toISOString().split('T')[0],
+                                transport_unit_id: '',
                                 notes: '',
                                 items: []
                             });
@@ -529,21 +508,40 @@ export function ExportFormPage() {
 
                         {/* Vehicle Info */}
                         <Card>
-                            <CardHeader title="Thông tin xe vận chuyển" />
+                            <CardHeader title="Thông tin vận chuyển" />
                             <CardContent className="space-y-4">
-                                <Select
-                                    id="vehicle_id"
-                                    label="Chọn xe"
-                                    options={[
-                                        { value: '', label: 'Chọn xe (không bắt buộc)' },
-                                        ...vehicles.map(v => ({
-                                            value: v.id,
-                                            label: `${v.plate_number}${v.driver_name ? ` - ${v.driver_name}` : ''}`
-                                        }))
-                                    ]}
-                                    value={formData.vehicle_id}
-                                    onChange={handleInputChange}
-                                />
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <Select
+                                        id="transport_unit_id"
+                                        label="Đơn vị vận chuyển"
+                                        options={[
+                                            { value: '', label: 'Chọn đơn vị' },
+                                            ...transportUnits.map(u => ({ value: u.id, label: u.name }))
+                                        ]}
+                                        value={formData.transport_unit_id}
+                                        onChange={e => {
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                transport_unit_id: e.target.value,
+                                                vehicle_id: ''
+                                            }));
+                                        }}
+                                    />
+                                    <Select
+                                        id="vehicle_id"
+                                        label="Số xe"
+                                        options={[
+                                            { value: '', label: 'Chọn xe' },
+                                            ...vehicles.filter(v => v.transport_unit_id === formData.transport_unit_id).map(v => ({
+                                                value: v.id,
+                                                label: `${v.plate_number}${v.driver_name ? ` - ${v.driver_name}` : ''}`
+                                            }))
+                                        ]}
+                                        value={formData.vehicle_id}
+                                        onChange={handleInputChange}
+                                        disabled={!formData.transport_unit_id}
+                                    />
+                                </div>
                             </CardContent>
                         </Card>
 

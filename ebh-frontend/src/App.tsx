@@ -20,7 +20,8 @@ import {
   ProjectsPage,
   UsersPage,
   SettingsPage,
-  InventoryReportPage
+  InventoryReportPage,
+  TransportReportPage
 } from './pages';
 
 const queryClient = new QueryClient({
@@ -118,7 +119,7 @@ function AppRoutes() {
         {/* Reports */}
         {/* <Route path="reports" element={<PlaceholderPage title="Báo cáo" />} /> */}
         <Route path="reports" element={<InventoryReportPage />} />
-        <Route path="reports/transport" element={<PlaceholderPage title="Báo cáo vận tải" />} />
+        <Route path="reports/transport" element={<TransportReportPage />} />
         <Route path="reports/profit" element={<PlaceholderPage title="Báo cáo lợi nhuận" />} />
 
         {/* Admin */}

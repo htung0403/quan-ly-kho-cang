@@ -1,112 +1,142 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Printer, Factory, Plus, Trash2, Calculator } from 'lucide-react';
-import { useReactToPrint } from 'react-to-print';
+import { 
+    ArrowLeft, Package, Warehouse, Plus, Trash2, ChevronRight, 
+    ChevronLeft, Truck, Printer, Check, FileText, ClipboardList,
+    Building2, User, Phone, Calendar, Hash, Scale, DollarSign,
+    AlertCircle, Sparkles, CheckCircle2
+} from 'lucide-react';
 import {
     Card,
     CardContent,
-    CardHeader,
     Button,
     Input,
     Select,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
-import { formatNumber, formatCurrency } from '@/lib/utils';
-import { PrintPurchaseReceipt } from '@/components/PrintPurchaseReceipt';
-import { Material, Warehouse, Project, SystemSettings } from '@/types';
+import { formatNumber, formatCurrency, formatDate } from '@/lib/utils';
+import { Material, Warehouse as WarehouseType, Project, Vehicle, TransportUnit } from '@/types';
+
+type ReceiptType = 'direct_to_site' | 'warehouse_import';
 
 interface PurchaseItem {
     material_id: string;
     material?: Material;
-    quantity_primary: number; // For backend: Tấn
+    quantity_primary: number;
     unit_price: number;
+}
 
-    // Display fields for consistency with Export style
-    display_quantity: number;
-    display_unit: string;
-    display_price: number;
+interface TransportRecordForm {
+    transport_date: string;
+    transport_company: string;
+    vehicle_plate: string;
+    ticket_number: string;
+    material_id: string;
+    quantity_primary: string;
+    density: string;
+    unit_price: string;
+    transport_fee: string;
+    vehicle_id: string;
+    transport_unit_id: string;
+    notes: string;
 }
 
 interface FormData {
-    warehouse_id: string;
-    project_id: string;
-    supplier_name: string;
-    supplier_phone: string;
-    invoice_number: string;
-    invoice_date: string;
+    receipt_type: ReceiptType;
+    receipt_number?: string;
     receipt_date: string;
     notes: string;
     items: PurchaseItem[];
+    transport_record: TransportRecordForm;
+
+    // Type-specific fields
+    direct_to_site_details?: {
+        quarry_name: string;
+        supplier_name: string;
+        supplier_phone?: string;
+        destination_site?: string;
+        invoice_number?: string;
+        invoice_date?: string;
+    };
+    warehouse_import_details?: {
+        warehouse_id: string;
+        project_id?: string;
+        supplier_name?: string;
+        supplier_phone?: string;
+        invoice_number?: string;
+        invoice_date?: string;
+    };
 }
 
 export function PurchaseFormPage() {
     const navigate = useNavigate();
     const { success, error } = useToast();
-    const printRef = useRef<HTMLDivElement>(null);
 
+    const [step, setStep] = useState(1); // 1: Type, 2: Details, 3: Items, 4: Transport, 5: Confirm
     const [isLoading, setIsLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isSuccess, setIsSuccess] = useState(false);
-    const [createdReceipt, setCreatedReceipt] = useState<any>(null);
-    const [settings, setSettings] = useState<SystemSettings | null>(null);
+    const [createdReceiptId, setCreatedReceiptId] = useState<string | null>(null);
 
     // Options
-    const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [materials, setMaterials] = useState<Material[]>([]);
+    const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
+    const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+    const [transportUnits, setTransportUnits] = useState<TransportUnit[]>([]);
 
     // Form data
     const [formData, setFormData] = useState<FormData>({
-        warehouse_id: '',
-        project_id: '',
-        supplier_name: '',
-        supplier_phone: '',
-        invoice_number: '',
-        invoice_date: '',
+        receipt_type: 'warehouse_import',
+        receipt_number: '',
         receipt_date: new Date().toISOString().split('T')[0],
         notes: '',
-        items: []
+        items: [],
+        transport_record: {
+            transport_date: new Date().toISOString().split('T')[0],
+            transport_company: '',
+            vehicle_plate: '',
+            ticket_number: '',
+            material_id: '',
+            quantity_primary: '',
+            density: '1',
+            unit_price: '',
+            transport_fee: '0',
+            vehicle_id: '',
+            transport_unit_id: '',
+            notes: ''
+        }
     });
 
-    // Temporary state for adding new item
-    const [currentItem, setCurrentItem] = useState<{
-        material_id: string;
-        quantity: number;
-        unit: string;
-        price: number;
-    }>({
+    // Current item being added
+    const [currentItem, setCurrentItem] = useState({
         material_id: '',
-        quantity: 0,
-        unit: '',
-        price: 0
+        quantity_primary: 0,
+        price: 0,
+        notes: ''
     });
 
-    const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
 
-    const handlePrint = useReactToPrint({
-        contentRef: printRef,
-        documentTitle: `Phieu_Nhap_${createdReceipt?.receipt_number || ''}`,
-    });
-
+    // Load options
     const fetchOptions = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [warehousesRes, materialsRes, projectsRes, settingsRes] = await Promise.all([
-                api.warehouses.getAll({ limit: 1000 }),
+            const [materialsRes, warehousesRes, projectsRes, vehiclesRes, transportUnitsRes] = await Promise.all([
                 api.materials.getAll({ limit: 1000 }),
+                api.warehouses.getAll({ limit: 1000 }),
                 api.projects.getAll({ limit: 1000 }),
-                api.settings.get()
+                api.vehicles.getAll({ limit: 1000 }),
+                api.transportUnits.getAll({ limit: 1000 })
             ]) as any[];
 
-            if (warehousesRes.success) setWarehouses(Array.isArray(warehousesRes.data) ? warehousesRes.data : warehousesRes.data.items || []);
             if (materialsRes.success) setMaterials(Array.isArray(materialsRes.data) ? materialsRes.data : materialsRes.data.items || []);
+            if (warehousesRes.success) setWarehouses(Array.isArray(warehousesRes.data) ? warehousesRes.data : warehousesRes.data.items || []);
             if (projectsRes.success) setProjects(Array.isArray(projectsRes.data) ? projectsRes.data : projectsRes.data.items || []);
-
-            if (settingsRes) setSettings(settingsRes);
+            if (vehiclesRes.success) setVehicles(Array.isArray(vehiclesRes.data) ? vehiclesRes.data : vehiclesRes.data.items || []);
+            if (transportUnitsRes.success) setTransportUnits(Array.isArray(transportUnitsRes.data) ? transportUnitsRes.data : transportUnitsRes.data.items || []);
         } catch (err) {
             console.error(err);
-            error('Không thể tải dữ liệu danh mục');
+            error('Không thể tải dữ liệu');
         } finally {
             setIsLoading(false);
         }
@@ -116,79 +146,33 @@ export function PurchaseFormPage() {
         fetchOptions();
     }, [fetchOptions]);
 
-    // Handle Material Selection for temporary item
+    // Update transport fee when qty or price in formData changes
     useEffect(() => {
-        if (currentItem.material_id) {
-            const mat = materials.find(m => m.id === currentItem.material_id);
-            setSelectedMaterial(mat || null);
-            if (mat) {
-                // Default to primary unit (usually Tấn) for Purchases
-                if (!currentItem.unit || (currentItem.unit !== mat.primary_unit && currentItem.unit !== mat.secondary_unit)) {
-                    setCurrentItem(prev => ({ ...prev, unit: mat.primary_unit }));
-                }
-
-                // If no price set, use purchase price
-                if (!currentItem.price && mat.purchase_price) {
-                    setCurrentItem(prev => ({ ...prev, price: mat.purchase_price || 0 }));
-                }
-            } else {
-                setCurrentItem(prev => ({ ...prev, unit: '', price: 0 }));
-            }
-        } else {
-            setSelectedMaterial(null);
-            setCurrentItem(prev => ({ ...prev, unit: '', price: 0 }));
-        }
-    }, [currentItem.material_id, materials]);
-
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-        const { id, value } = e.target;
-        setFormData(prev => ({ ...prev, [id]: value }));
-    };
-
-    const handleItemInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-        const { id, value } = e.target;
-        setCurrentItem(prev => ({
+        // Calculate total transport fee for all items
+        const totalQty = formData.items.reduce((sum, item) => sum + item.quantity_primary, 0);
+        const price = parseFloat(formData.transport_record.unit_price.replace(/\D/g, '')) || 0;
+        setFormData(prev => ({
             ...prev,
-            [id]: (id === 'quantity' || id === 'price') ? (parseFloat(value) || 0) : value
+            transport_record: {
+                ...prev.transport_record,
+                quantity_primary: totalQty.toString(),
+                transport_fee: (totalQty * price).toString()
+            }
         }));
-    };
-
-    const handleCurrencyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { id, value } = e.target;
-        const rawValue = value.replace(/\D/g, '');
-        const numValue = rawValue ? parseInt(rawValue, 10) : 0;
-        setCurrentItem(prev => ({ ...prev, [id]: numValue }));
-    };
+    }, [formData.items, formData.transport_record.unit_price]);
 
     const addItem = () => {
         if (!currentItem.material_id) {
             error('Vui lòng chọn vật tư');
             return;
         }
-        if (!currentItem.quantity || currentItem.quantity <= 0) {
+        if (!currentItem.quantity_primary || currentItem.quantity_primary <= 0) {
             error('Số lượng phải lớn hơn 0');
             return;
         }
 
         const material = materials.find(m => m.id === currentItem.material_id);
         if (!material) return;
-
-        let quantity_primary = 0;
-        let unit_price_primary = 0;
-        const density = material.current_density || 1; // Tấn/m3
-
-        if (currentItem.unit === material.primary_unit) {
-            // Selected Primary unit (Tấn)
-            quantity_primary = currentItem.quantity;
-            unit_price_primary = currentItem.price;
-        } else {
-            // Selected Secondary unit (m3) - Convert to Tấn
-            // Density = Tấn / m3 => Tấn = m3 * Density
-            quantity_primary = currentItem.quantity * density;
-
-            // Price/Tấn = Price/m3 / Density
-            unit_price_primary = currentItem.price / density;
-        }
 
         setFormData(prev => ({
             ...prev,
@@ -197,22 +181,16 @@ export function PurchaseFormPage() {
                 {
                     material_id: currentItem.material_id,
                     material,
-                    quantity_primary,
-                    unit_price: unit_price_primary,
-                    display_quantity: currentItem.quantity,
-                    display_unit: currentItem.unit,
-                    display_price: currentItem.price
+                    quantity_primary: currentItem.quantity_primary,
+                    unit_price: currentItem.price,
+                    notes: currentItem.notes
                 }
             ]
         }));
 
-        // Reset quantity/price
-        setCurrentItem(prev => ({
-            ...prev,
-            quantity: 0,
-            price: 0
-        }));
+        setCurrentItem({ material_id: '', quantity_primary: 0, price: 0, notes: '' });
     };
+
 
     const removeItem = (index: number) => {
         setFormData(prev => ({
@@ -221,110 +199,215 @@ export function PurchaseFormPage() {
         }));
     };
 
-    const calculateTotal = () => {
-        return formData.items.reduce((sum, item) => sum + (item.display_quantity * item.display_price), 0);
+
+    const calculateTotalAmount = () => {
+        return formData.items.reduce((sum, item) => sum + (item.quantity_primary * item.unit_price), 0);
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
 
-        if (!formData.warehouse_id) {
-            error('Vui lòng chọn kho nhập');
-            return;
-        }
+    const generateReceiptNumber = (prefix: string) => {
+        const date = new Date();
+        const year = date.getFullYear().toString().slice(-2);
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const seconds = date.getSeconds().toString().padStart(2, '0');
+        return `${prefix}${year}${month}${day}${hours}${minutes}${seconds}`;
+    };
+
+    const handleSubmit = async () => {
         if (formData.items.length === 0) {
             error('Vui lòng thêm ít nhất một vật tư');
+            return;
+        }
+        // Updated validation for a single transport record
+        if (!formData.transport_record.vehicle_plate) {
+            error('Vui lòng nhập biển số xe');
             return;
         }
 
         setIsSubmitting(true);
         try {
-            // Map items for API (backend expects quantity_primary, unit_price)
-            const apiData = {
+            // Use manual receipt number or auto-generate
+            const receiptNumber = formData.receipt_number?.trim() || generateReceiptNumber(formData.receipt_type === 'direct_to_site' ? 'PNTT' : 'PNK');
+
+            // Create transport records for each item
+            const transport_records = formData.items.map(item => ({
+                transport_date: formData.transport_record.transport_date,
+                transport_company: formData.transport_record.transport_company,
+                vehicle_plate: formData.transport_record.vehicle_plate,
+                ticket_number: formData.transport_record.ticket_number || receiptNumber,
+                material_id: item.material_id,
+                quantity_primary: item.quantity_primary,
+                density: item.material?.current_density || 1,
+                unit_price: parseFloat(formData.transport_record.unit_price.replace(/\D/g, '') || '0'),
+                transport_fee: item.quantity_primary * parseFloat(formData.transport_record.unit_price.replace(/\D/g, '') || '0'),
+                vehicle_id: formData.transport_record.vehicle_id,
+                transport_unit_id: formData.transport_record.transport_unit_id,
+                notes: formData.transport_record.notes
+            }));
+
+            const payload = {
                 ...formData,
-                items: formData.items.map(item => ({
-                    material_id: item.material_id,
-                    quantity_primary: item.quantity_primary,
-                    unit_price: item.unit_price
-                }))
+                receipt_number: receiptNumber,
+                transport_records
             };
 
-            const res = await api.purchases.create(apiData) as any;
+            const res = await api.purchases.create(payload) as any;
 
             if (res.success) {
-                // Fetch full detail for printing
-                const detailRes = await api.purchases.getById(res.data.id) as any;
-                setCreatedReceipt(detailRes.data);
-                setIsSuccess(true);
-                success(res.message || 'Tạo phiếu nhập thành công');
+                success(res.message || 'Tạo phiếu thành công');
+                setCreatedReceiptId(res.data.id);
+                setStep(6);
             }
         } catch (err: any) {
-            error(err.message || 'Có lỗi xảy ra khi lưu phiếu');
+            error(err.message || 'Có lỗi xảy ra');
         } finally {
             setIsSubmitting(false);
         }
     };
 
-    const currentItemTotal = currentItem.quantity * currentItem.price;
+    const getReceiptTypeInfo = () => {
+        const types = {
+            direct_to_site: {
+                title: 'Xuất trực tiếp vào công trình',
+                icon: <Package className="w-6 h-6" />,
+                color: 'bg-green-500',
+                description: 'Giao hàng trực tiếp từ mỏ/NCC đến công trình'
+            },
+            warehouse_import: {
+                title: 'Nhập kho tại cảng',
+                icon: <Warehouse className="w-6 h-6" />,
+                color: 'bg-blue-500',
+                description: 'Nhập vật tư vào kho để quản lý tồn kho'
+            }
+        };
+        return types[formData.receipt_type];
+    };
 
-    if (isSuccess && createdReceipt) {
+    // Steps configuration
+    const steps = [
+        { id: 1, title: 'Loại phiếu', description: 'Chọn hình thức nhập', icon: FileText },
+        { id: 2, title: 'Thông tin', description: 'Nhập thông tin chi tiết', icon: ClipboardList },
+        { id: 3, title: 'Vật tư', description: 'Thêm danh sách vật tư', icon: Package },
+        { id: 4, title: 'Vận chuyển', description: 'Thông tin xe & lái xe', icon: Truck },
+        { id: 5, title: 'Xác nhận', description: 'Kiểm tra & hoàn tất', icon: CheckCircle2 }
+    ];
+
+    // Stepper Component
+    const StepIndicator = () => (
+        <div className="relative">
+            {/* Background Line */}
+            <div className="absolute top-8 left-0 right-0 h-0.5 bg-slate-200 hidden md:block" style={{ left: '10%', right: '10%' }} />
+            
+            {/* Progress Line */}
+            <div 
+                className="absolute top-8 h-0.5 bg-gradient-to-r from-primary-500 to-primary-400 hidden md:block transition-all duration-500"
+                style={{ 
+                    left: '10%', 
+                    width: `${Math.max(0, (step - 1) / (steps.length - 1) * 80)}%` 
+                }} 
+            />
+
+            {/* Steps */}
+            <div className="flex justify-between relative">
+                {steps.map((s) => {
+                    const isCompleted = step > s.id;
+                    const isCurrent = step === s.id;
+                    const isClickable = s.id < step && step <= 5;
+                    const StepIcon = s.icon;
+                    
+                    return (
+                        <div 
+                            key={s.id} 
+                            className={`flex flex-col items-center gap-2 group cursor-pointer transition-all ${isClickable ? 'hover:scale-105' : ''}`}
+                            onClick={() => isClickable && setStep(s.id)}
+                        >
+                            {/* Step Circle */}
+                            <div className={`
+                                relative w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 shadow-lg
+                                ${isCompleted 
+                                    ? 'bg-gradient-to-br from-green-400 to-green-500 text-white shadow-green-200' 
+                                    : isCurrent 
+                                        ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white shadow-primary-200 ring-4 ring-primary-100 animate-pulse' 
+                                        : 'bg-white text-slate-400 border-2 border-slate-200'
+                                }
+                            `}>
+                                {isCompleted ? (
+                                    <Check className="w-7 h-7" />
+                                ) : (
+                                    <StepIcon className="w-7 h-7" />
+                                )}
+                                {/* Step Number Badge */}
+                                <span className={`
+                                    absolute -top-1 -right-1 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center
+                                    ${isCompleted ? 'bg-green-600 text-white' : isCurrent ? 'bg-primary-700 text-white' : 'bg-slate-300 text-slate-600'}
+                                `}>
+                                    {s.id}
+                                </span>
+                            </div>
+                            
+                            {/* Step Label */}
+                            <div className="text-center hidden md:block">
+                                <p className={`font-bold text-sm ${isCurrent ? 'text-primary-600' : isCompleted ? 'text-green-600' : 'text-slate-400'}`}>
+                                    {s.title}
+                                </p>
+                                <p className="text-xs text-slate-400 max-w-[100px] truncate">{s.description}</p>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+
+    // Material Summary Card Component
+    const MaterialSummaryCard = ({ item, idx, showDelete = false }: { item: PurchaseItem; idx: number; showDelete?: boolean }) => {
+        const volumeM3 = item.quantity_primary / (item.material?.current_density || 1);
+        const totalPrice = item.quantity_primary * item.unit_price;
+        
         return (
-            <div className="space-y-6 animate-fade-in">
-                <div className="flex items-center justify-between">
-                    <Button variant="ghost" onClick={() => navigate('/purchases')} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                        Về danh sách
-                    </Button>
-                    <div className="flex gap-2">
-                        <Button variant="secondary" onClick={() => handlePrint()} leftIcon={<Printer className="w-4 h-4" />}>
-                            In phiếu
-                        </Button>
-                        <Button onClick={() => {
-                            setIsSuccess(false);
-                            setCreatedReceipt(null);
-                            setFormData({
-                                warehouse_id: '',
-                                project_id: '',
-                                supplier_name: '',
-                                supplier_phone: '',
-                                invoice_number: '',
-                                invoice_date: '',
-                                receipt_date: new Date().toISOString().split('T')[0],
-                                notes: '',
-                                items: []
-                            });
-                        }}>
-                            Tạo phiếu mới
-                        </Button>
+            <div className="group relative bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md hover:border-primary-200 transition-all">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3 flex-1">
+                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-100 to-primary-50 flex items-center justify-center">
+                            <Package className="w-5 h-5 text-primary-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-900 truncate">{item.material?.name || 'Vật tư'}</p>
+                            <p className="text-sm text-slate-500">{item.material?.code}</p>
+                        </div>
                     </div>
+                    {showDelete && (
+                        <button 
+                            onClick={() => removeItem(idx)} 
+                            className="opacity-0 group-hover:opacity-100 p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    )}
                 </div>
-
-                <Card className="bg-gradient-to-br from-blue-50 to-indigo-100 border-blue-200">
-                    <CardContent className="py-8 text-center text-slate-800">
-                        <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Plus className="w-8 h-8 text-white" />
-                        </div>
-                        <h2 className="text-2xl font-bold text-blue-900 mb-2">Tạo phiếu nhập thành công!</h2>
-                        <p className="text-blue-700">Số phiếu: <span className="font-mono font-bold">{createdReceipt.receipt_number}</span></p>
-
-                        <div className="mt-4 text-left max-w-lg mx-auto bg-white p-4 rounded-xl border border-blue-100 shadow-sm text-sm">
-                            <p className="flex justify-between py-1"><strong>Ngày nhập:</strong> <span>{formatDate(createdReceipt.receipt_date)}</span></p>
-                            <p className="flex justify-between py-1"><strong>Kho:</strong> <span>{createdReceipt.warehouse?.name}</span></p>
-                            {createdReceipt.supplier_name && (
-                                <p className="flex justify-between py-1"><strong>Nhà CC:</strong> <span>{createdReceipt.supplier_name}</span></p>
-                            )}
-                            <p className="border-t mt-2 pt-2 flex justify-between"><strong>Tổng tiền:</strong> <span className="text-blue-600 font-bold">{formatCurrency(createdReceipt.total_amount)}</span></p>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <div className="hidden">
-                    <div ref={printRef}>
-                        <PrintPurchaseReceipt receipt={createdReceipt} settings={settings || undefined} />
+                
+                <div className="mt-4 grid grid-cols-3 gap-4 pt-4 border-t border-slate-100">
+                    <div>
+                        <p className="text-xs text-slate-400 uppercase font-medium">Số lượng</p>
+                        <p className="font-bold text-slate-800">{formatNumber(item.quantity_primary, 2)} <span className="text-xs font-normal text-slate-400">Tấn</span></p>
+                        <p className="text-xs text-slate-400">{formatNumber(volumeM3, 2)} m³</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-400 uppercase font-medium">Đơn giá</p>
+                        <p className="font-bold text-slate-800">{formatNumber(item.unit_price, 0)}</p>
+                        <p className="text-xs text-slate-400">VNĐ/Tấn</p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-xs text-slate-400 uppercase font-medium">Thành tiền</p>
+                        <p className="font-bold text-primary-600">{formatCurrency(totalPrice)}</p>
                     </div>
                 </div>
             </div>
         );
-    }
+    };
 
     if (isLoading) {
         return (
@@ -335,282 +418,1058 @@ export function PurchaseFormPage() {
     }
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            {/* Header */}
-            <div className="flex items-center gap-4">
-                <Button variant="ghost" onClick={() => navigate('/purchases')} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                    Quay lại
-                </Button>
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Tạo phiếu nhập mua</h1>
-                    <p className="text-slate-500">Nhập vật tư từ nhà cung cấp về kho</p>
+        <div className="space-y-8 animate-fade-in pb-8">
+            {/* Header với Gradient */}
+            <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-6 md:p-8 text-white shadow-xl">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                        <button 
+                            onClick={() => navigate('/purchases')} 
+                            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                        >
+                            <ArrowLeft className="w-5 h-5" />
+                        </button>
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-black tracking-tight flex items-center gap-2">
+                                <Sparkles className="w-6 h-6 text-primary-400" />
+                                Tạo phiếu nhập mới
+                            </h1>
+                            <p className="text-slate-400 text-sm mt-1">
+                                {step <= 5 ? `Bước ${step}/5 - ${steps[step-1]?.title}` : 'Hoàn thành'}
+                            </p>
+                        </div>
+                    </div>
+                    
+                    {step <= 5 && (
+                        <div className="flex items-center gap-3 bg-white/10 rounded-xl px-4 py-2">
+                            <div className={`w-3 h-3 rounded-full ${getReceiptTypeInfo().color}`}></div>
+                            <span className="text-sm font-medium">{getReceiptTypeInfo().title}</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit}>
+            {/* Stepper */}
+            {step <= 5 && (
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                    <StepIndicator />
+                </div>
+            )}
+
+            {/* Step 1: Chọn loại phiếu */}
+            {step === 1 && (
+                <div className="space-y-6">
+                    {/* Section Header */}
+                    <div className="text-center max-w-xl mx-auto">
+                        <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shadow-lg shadow-primary-200 mb-4">
+                            <FileText className="w-8 h-8" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-slate-900 mb-2">Chọn loại phiếu nhập</h2>
+                        <p className="text-slate-500">Vui lòng chọn hình thức nhập hàng phù hợp với quy trình của bạn</p>
+                    </div>
+                    
+                    {/* Receipt Type Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+                        {/* Direct to Site */}
+                        <button
+                            onClick={() => setFormData(prev => ({ ...prev, receipt_type: 'direct_to_site' as ReceiptType }))}
+                            className={`group relative p-8 rounded-2xl border-2 transition-all text-left overflow-hidden ${
+                                formData.receipt_type === 'direct_to_site'
+                                    ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 shadow-xl shadow-green-100'
+                                    : 'border-slate-200 bg-white hover:border-green-300 hover:shadow-lg'
+                            }`}
+                        >
+                            {/* Selection Indicator */}
+                            {formData.receipt_type === 'direct_to_site' && (
+                                <div className="absolute top-4 right-4 w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center">
+                                    <Check className="w-5 h-5" />
+                                </div>
+                            )}
+                            
+                            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-green-500 to-emerald-500 text-white flex items-center justify-center mb-5 group-hover:scale-110 transition-transform shadow-lg shadow-green-200/50">
+                                <Package className="w-7 h-7" />
+                            </div>
+                            <h3 className="font-bold text-lg text-slate-900 mb-2">Xuất trực tiếp vào công trình</h3>
+                            <p className="text-sm text-slate-500 mb-4">
+                                Giao hàng trực tiếp từ mỏ/NCC đến công trình. Không qua kho, không tăng tồn kho.
+                            </p>
+                            <div className="flex items-center gap-2 text-xs">
+                                <span className="px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium">Nhanh chóng</span>
+                                <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-600">Không tồn kho</span>
+                            </div>
+                        </button>
+
+                        {/* Warehouse Import */}
+                        <button
+                            onClick={() => setFormData(prev => ({ ...prev, receipt_type: 'warehouse_import' as ReceiptType }))}
+                            className={`group relative p-8 rounded-2xl border-2 transition-all text-left overflow-hidden ${
+                                formData.receipt_type === 'warehouse_import'
+                                    ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-indigo-50 shadow-xl shadow-blue-100'
+                                    : 'border-slate-200 bg-white hover:border-blue-300 hover:shadow-lg'
+                            }`}
+                        >
+                            {/* Selection Indicator */}
+                            {formData.receipt_type === 'warehouse_import' && (
+                                <div className="absolute top-4 right-4 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center">
+                                    <Check className="w-5 h-5" />
+                                </div>
+                            )}
+                            
+                            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 text-white flex items-center justify-center mb-5 group-hover:scale-110 transition-transform shadow-lg shadow-blue-200/50">
+                                <Warehouse className="w-7 h-7" />
+                            </div>
+                            <h3 className="font-bold text-lg text-slate-900 mb-2">Nhập kho tại cảng</h3>
+                            <p className="text-sm text-slate-500 mb-4">
+                                Nhập vật tư vào kho để quản lý. Tăng số lượng tồn kho và theo dõi chi tiết.
+                            </p>
+                            <div className="flex items-center gap-2 text-xs">
+                                <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">Quản lý kho</span>
+                                <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-600">Tăng tồn kho</span>
+                            </div>
+                        </button>
+                    </div>
+                    
+                    {/* Action Button */}
+                    <div className="flex justify-center pt-6">
+                        <Button 
+                            onClick={() => setStep(2)} 
+                            size="lg"
+                            className="px-12 h-14 text-lg font-bold shadow-lg shadow-primary-200"
+                            rightIcon={<ChevronRight className="w-5 h-5" />}
+                        >
+                            Tiếp tục
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {/* Step 2: Nhập thông tin chi tiết */}
+            {step === 2 && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Main Form */}
+                    {/* Left Panel - Form */}
                     <div className="lg:col-span-2 space-y-6">
-                        {/* Basic Info */}
-                        <Card>
-                            <CardHeader title="Thông tin chung" />
-                            <CardContent className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Select
-                                        id="warehouse_id"
-                                        label="Kho nhập (*)"
-                                        options={[
-                                            { value: '', label: 'Chọn kho' },
-                                            ...warehouses.map(w => ({ value: w.id, label: w.name }))
-                                        ]}
-                                        value={formData.warehouse_id}
-                                        onChange={handleInputChange}
-                                        required
-                                    />
-                                    <Input
-                                        id="receipt_date"
-                                        label="Ngày nhập (*)"
-                                        type="date"
-                                        value={formData.receipt_date}
-                                        onChange={handleInputChange}
-                                        required
-                                    />
+                        <Card className="overflow-hidden border-0 shadow-lg">
+                            <div className="bg-gradient-to-r from-primary-500 to-primary-600 px-6 py-4">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <ClipboardList className="w-5 h-5" />
+                                    Thông tin phiếu nhập
+                                </h3>
+                            </div>
+                            <CardContent className="p-6 space-y-6">
+                                {/* Basic Info */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="relative">
+                                        <Input
+                                            id="receipt_number"
+                                            label="Số phiếu"
+                                            placeholder="Tự động tạo nếu để trống"
+                                            value={formData.receipt_number || ''}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, receipt_number: e.target.value }))}
+                                        />
+                                        <Hash className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                    </div>
+                                    <div className="relative">
+                                        <Input
+                                            id="receipt_date"
+                                            label="Ngày nhập (*)"
+                                            type="date"
+                                            value={formData.receipt_date}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, receipt_date: e.target.value }))}
+                                            required
+                                        />
+                                        <Calendar className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                    </div>
                                 </div>
 
-                                <Select
-                                    id="project_id"
-                                    label="Dự án"
-                                    options={[
-                                        { value: '', label: 'Chọn dự án (không bắt buộc)' },
-                                        ...projects.map(p => ({ value: p.id, label: p.name }))
-                                    ]}
-                                    value={formData.project_id}
-                                    onChange={handleInputChange}
-                                />
-                            </CardContent>
-                        </Card>
-
-                        {/* Items */}
-                        <Card>
-                            <CardHeader title="Chi tiết vật tư" />
-                            <CardContent className="space-y-6">
-                                {/* Add Item Form */}
-                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                        <Select
-                                            id="material_id"
-                                            label="Chọn vật tư"
-                                            options={[
-                                                { value: '', label: 'Chọn vật tư' },
-                                                ...materials.map(m => ({ value: m.id, label: `${m.code} - ${m.name}` }))
-                                            ]}
-                                            value={currentItem.material_id}
-                                            onChange={handleItemInputChange}
-                                        />
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="flex gap-2">
-                                                <div className="flex-1">
-                                                    <Input
-                                                        id="quantity"
-                                                        label="Số lượng"
-                                                        type="number"
-                                                        step="0.01"
-                                                        value={currentItem.quantity || ''}
-                                                        onChange={handleItemInputChange}
-                                                    />
-                                                </div>
-                                                <div className="w-[100px]">
-                                                    <Select
-                                                        id="unit"
-                                                        label="ĐVT"
-                                                        options={selectedMaterial ? [
-                                                            { value: selectedMaterial.primary_unit, label: selectedMaterial.primary_unit },
-                                                            { value: selectedMaterial.secondary_unit, label: selectedMaterial.secondary_unit }
-                                                        ] : []}
-                                                        value={currentItem.unit}
-                                                        onChange={handleItemInputChange}
-                                                        disabled={!selectedMaterial}
-                                                    />
-                                                </div>
-                                            </div>
+                                {/* Direct to Site Fields */}
+                                {formData.receipt_type === 'direct_to_site' && (
+                                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                            <Building2 className="w-4 h-4" /> Thông tin mỏ & nhà cung cấp
+                                        </p>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <Input
-                                                id="price"
-                                                label={`Đơn giá (${currentItem.unit ? `/${currentItem.unit}` : ''})`}
-                                                value={currentItem.price ? formatNumber(currentItem.price, 0) : ''}
-                                                onChange={handleCurrencyChange}
+                                                id="quarry_name"
+                                                label="Tên mỏ (*)"
+                                                placeholder="Nhập tên mỏ khai thác"
+                                                value={formData.direct_to_site_details?.quarry_name || ''}
+                                                onChange={(e) => setFormData(prev => ({
+                                                    ...prev,
+                                                    direct_to_site_details: { ...prev.direct_to_site_details!, quarry_name: e.target.value }
+                                                }))}
+                                                required
+                                            />
+                                            <Input
+                                                id="destination_site"
+                                                label="Công trình đích"
+                                                placeholder="Nơi giao hàng"
+                                                value={formData.direct_to_site_details?.destination_site || ''}
+                                                onChange={(e) => setFormData(prev => ({
+                                                    ...prev,
+                                                    direct_to_site_details: { ...prev.direct_to_site_details!, destination_site: e.target.value }
+                                                }))}
                                             />
                                         </div>
-                                    </div>
-                                    <div className="flex justify-between items-center px-1">
-                                        <div className="text-sm">
-                                            Thành tiền: <span className="font-bold text-success-600 text-base">{formatCurrency(currentItemTotal)}</span>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="relative">
+                                                <Input
+                                                    id="supplier_name"
+                                                    label="Nhà cung cấp (*)"
+                                                    placeholder="Tên nhà cung cấp"
+                                                    value={formData.direct_to_site_details?.supplier_name || ''}
+                                                    onChange={(e) => setFormData(prev => ({
+                                                        ...prev,
+                                                        direct_to_site_details: { ...prev.direct_to_site_details!, supplier_name: e.target.value }
+                                                    }))}
+                                                    required
+                                                />
+                                                <User className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                            </div>
+                                            <div className="relative">
+                                                <Input
+                                                    id="supplier_phone"
+                                                    label="SĐT Nhà cung cấp"
+                                                    placeholder="0xxx xxx xxx"
+                                                    value={formData.direct_to_site_details?.supplier_phone || ''}
+                                                    onChange={(e) => setFormData(prev => ({
+                                                        ...prev,
+                                                        direct_to_site_details: { ...prev.direct_to_site_details!, supplier_phone: e.target.value }
+                                                    }))}
+                                                />
+                                                <Phone className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                            </div>
                                         </div>
-                                        <Button type="button" size="sm" onClick={addItem} leftIcon={<Plus className="w-4 h-4" />}>
-                                            Thêm vật tư
-                                        </Button>
                                     </div>
-                                </div>
+                                )}
 
-                                {/* Items List */}
-                                {formData.items.length > 0 ? (
-                                    <div className="border rounded-lg overflow-hidden shadow-sm">
-                                        <table className="w-full text-sm">
-                                            <thead className="bg-slate-50 border-b">
-                                                <tr>
-                                                    <th className="p-3 text-left">Vật tư</th>
-                                                    <th className="p-3 text-right">Số lượng</th>
-                                                    <th className="p-3 text-right">Đơn giá</th>
-                                                    <th className="p-3 text-right">Thành tiền</th>
-                                                    <th className="p-3 w-10"></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y">
-                                                {formData.items.map((item, idx) => (
-                                                    <tr key={idx} className="hover:bg-slate-50/50">
-                                                        <td className="p-3">
-                                                            <div className="font-medium text-slate-900">{item.material?.name}</div>
-                                                            <div className="text-xs text-slate-500 font-mono">{item.material?.code}</div>
-                                                        </td>
-                                                        <td className="p-3 text-right font-medium">
-                                                            {formatNumber(item.display_quantity, 2)} {item.display_unit}
-                                                        </td>
-                                                        <td className="p-3 text-right text-slate-600 font-mono">
-                                                            {formatNumber(item.display_price, 0)}
-                                                        </td>
-                                                        <td className="p-3 text-right font-semibold text-slate-900">
-                                                            {formatCurrency(item.display_quantity * item.display_price)}
-                                                        </td>
-                                                        <td className="p-3 text-center">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => removeItem(idx)}
-                                                                className="p-1.5 text-slate-400 hover:text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
-                                                            >
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                            <tfoot className="bg-slate-50 font-bold border-t">
-                                                <tr>
-                                                    <td colSpan={3} className="p-4 text-right text-slate-600 uppercase tracking-wider text-xs">Tổng cộng:</td>
-                                                    <td className="p-4 text-right text-success-600 text-lg font-mono">
-                                                        {formatCurrency(calculateTotal())}
-                                                    </td>
-                                                    <td></td>
-                                                </tr>
-                                            </tfoot>
-                                        </table>
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-10 text-slate-400 border-2 border-dashed rounded-xl bg-slate-50/50">
-                                        <p className="flex flex-col items-center gap-2">
-                                            <Calculator className="w-8 h-8 text-slate-300" />
-                                            Chưa có vật tư nào được chọn
+                                {/* Warehouse Import Fields */}
+                                {formData.receipt_type === 'warehouse_import' && (
+                                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                            <Warehouse className="w-4 h-4" /> Thông tin kho & dự án
                                         </p>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <Select
+                                                id="warehouse_id"
+                                                label="Kho nhập (*)"
+                                                options={[
+                                                    { value: '', label: 'Chọn kho nhập...' },
+                                                    ...warehouses.map(w => ({ value: w.id, label: w.name }))
+                                                ]}
+                                                value={formData.warehouse_import_details?.warehouse_id || ''}
+                                                onChange={(e) => setFormData(prev => ({
+                                                    ...prev,
+                                                    warehouse_import_details: { ...prev.warehouse_import_details!, warehouse_id: e.target.value }
+                                                }))}
+                                                required
+                                            />
+                                            <Select
+                                                id="project_id"
+                                                label="Dự án (Tùy chọn)"
+                                                options={[
+                                                    { value: '', label: 'Chọn dự án...' },
+                                                    ...projects.map(p => ({ value: p.id, label: p.name }))
+                                                ]}
+                                                value={formData.warehouse_import_details?.project_id || ''}
+                                                onChange={(e) => setFormData(prev => ({
+                                                    ...prev,
+                                                    warehouse_import_details: { ...prev.warehouse_import_details!, project_id: e.target.value }
+                                                }))}
+                                            />
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="relative">
+                                                <Input
+                                                    id="supplier_name_warehouse"
+                                                    label="Nhà cung cấp"
+                                                    placeholder="Tên nhà cung cấp"
+                                                    value={formData.warehouse_import_details?.supplier_name || ''}
+                                                    onChange={(e) => setFormData(prev => ({
+                                                        ...prev,
+                                                        warehouse_import_details: { ...prev.warehouse_import_details!, supplier_name: e.target.value }
+                                                    }))}
+                                                />
+                                                <User className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                            </div>
+                                            <div className="relative">
+                                                <Input
+                                                    id="supplier_phone_warehouse"
+                                                    label="SĐT Nhà cung cấp"
+                                                    placeholder="0xxx xxx xxx"
+                                                    value={formData.warehouse_import_details?.supplier_phone || ''}
+                                                    onChange={(e) => setFormData(prev => ({
+                                                        ...prev,
+                                                        warehouse_import_details: { ...prev.warehouse_import_details!, supplier_phone: e.target.value }
+                                                    }))}
+                                                />
+                                                <Phone className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                             </CardContent>
                         </Card>
 
-                        {/* Supplier & Invoice Info */}
-                        <Card>
-                            <CardHeader title="Thông tin nhà cung cấp & Hóa đơn" />
-                            <CardContent className="space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <Input
-                                        id="supplier_name"
-                                        label="Tên nhà cung cấp"
-                                        placeholder="Nhập tên nhà cung cấp"
-                                        leftIcon={<Factory className="w-4 h-4" />}
-                                        value={formData.supplier_name}
-                                        onChange={handleInputChange}
-                                    />
-                                    <Input
-                                        id="supplier_phone"
-                                        label="Số điện thoại"
-                                        placeholder="0123..."
-                                        value={formData.supplier_phone}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <Input
-                                        id="invoice_number"
-                                        label="Số hóa đơn"
-                                        placeholder="VD: 0001234"
-                                        value={formData.invoice_number}
-                                        onChange={handleInputChange}
-                                    />
-                                    <Input
-                                        id="invoice_date"
-                                        label="Ngày hóa đơn"
-                                        type="date"
-                                        value={formData.invoice_date}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Ghi chú</label>
-                                    <textarea
-                                        id="notes"
-                                        rows={3}
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                                        placeholder="Nhập ghi chú thêm nếu có..."
-                                        value={formData.notes}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-                            </CardContent>
-                        </Card>
+                        {/* Action Buttons */}
+                        <div className="flex justify-between items-center">
+                            <Button 
+                                variant="ghost" 
+                                onClick={() => setStep(1)} 
+                                leftIcon={<ChevronLeft className="w-4 h-4" />}
+                                className="hover:bg-slate-100"
+                            >
+                                Quay lại
+                            </Button>
+                            <Button 
+                                onClick={() => setStep(3)} 
+                                rightIcon={<ChevronRight className="w-4 h-4" />}
+                                size="lg"
+                                className="px-8 shadow-lg shadow-primary-200"
+                            >
+                                Tiếp tục
+                            </Button>
+                        </div>
                     </div>
-
-                    {/* Summary Sidebar */}
-                    <div className="space-y-6">
-                        <Card className="sticky top-4">
-                            <CardHeader title="Tổng quan" />
-                            <CardContent className="space-y-6">
-                                <div className="space-y-3">
-                                    <div className="p-4 bg-blue-50 rounded-xl text-center border border-blue-100">
-                                        <p className="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">Tổng tiền dự kiến</p>
-                                        <p className="text-2xl font-bold text-blue-700 font-mono">
-                                            {formatCurrency(calculateTotal())}
-                                        </p>
+                    
+                    {/* Right Panel - Summary */}
+                    <div className="lg:col-span-1">
+                        <div className="sticky top-6 space-y-4">
+                            <Card className="bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200">
+                                <CardContent className="p-6">
+                                    <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                        <AlertCircle className="w-4 h-4 text-primary-500" />
+                                        Tóm tắt
+                                    </h4>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200">
+                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white ${getReceiptTypeInfo().color}`}>
+                                                {formData.receipt_type === 'direct_to_site' ? <Package className="w-5 h-5" /> : <Warehouse className="w-5 h-5" />}
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-slate-400">Loại phiếu</p>
+                                                <p className="font-bold text-slate-800 text-sm">{getReceiptTypeInfo().title}</p>
+                                            </div>
+                                        </div>
+                                        <div className="p-3 bg-white rounded-lg border border-slate-200">
+                                            <p className="text-xs text-slate-400 mb-1">Ngày nhập</p>
+                                            <p className="font-bold text-slate-800">{formatDate(formData.receipt_date)}</p>
+                                        </div>
+                                        {formData.receipt_number && (
+                                            <div className="p-3 bg-white rounded-lg border border-slate-200">
+                                                <p className="text-xs text-slate-400 mb-1">Số phiếu</p>
+                                                <p className="font-bold text-slate-800">{formData.receipt_number}</p>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="p-3 bg-slate-50 rounded-xl flex justify-between items-center px-4 border border-slate-100">
-                                        <span className="text-sm text-slate-600">Số loại vật tư</span>
-                                        <span className="text-lg font-bold text-slate-800">{formData.items.length}</span>
-                                    </div>
-                                </div>
-
-                                <Button
-                                    type="submit"
-                                    className="w-full text-base py-6 shadow-lg shadow-primary-200"
-                                    disabled={isSubmitting}
-                                    leftIcon={<Save className="w-5 h-5" />}
-                                >
-                                    {isSubmitting ? 'Đang lưu phiếu...' : 'Tạo phiếu nhập'}
-                                </Button>
-
-                                <p className="text-[11px] text-center text-slate-400 italic">
-                                    Dữ liệu sẽ được cập nhật vào kho ngay khi phiếu được tạo
-                                </p>
-                            </CardContent>
-                        </Card>
+                                </CardContent>
+                            </Card>
+                            
+                            <div className="text-center text-sm text-slate-400">
+                                <p>Bước 2/5</p>
+                                <p className="text-xs">Nhập thông tin chi tiết</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </form>
+            )}
+
+            {/* Step 3: Thêm vật tư */}
+            {step === 3 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left Panel - Add Items Form */}
+                    <div className="lg:col-span-2 space-y-6">
+                        {/* Add New Item Card */}
+                        <Card className="overflow-hidden border-0 shadow-lg">
+                            <div className="bg-gradient-to-r from-emerald-500 to-green-500 px-6 py-4">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Plus className="w-5 h-5" />
+                                    Thêm vật tư mới
+                                </h3>
+                            </div>
+                            <CardContent className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <Select
+                                        id="material_id"
+                                        label="Vật tư (*)"
+                                        options={[
+                                            { value: '', label: 'Chọn vật tư...' },
+                                            ...materials.map(m => ({ value: m.id, label: `${m.code} - ${m.name}` }))
+                                        ]}
+                                        value={currentItem.material_id}
+                                        onChange={(e) => setCurrentItem(prev => ({ ...prev, material_id: e.target.value }))}
+                                    />
+                                    <div className="relative">
+                                        <Input
+                                            id="quantity"
+                                            label="Số lượng (*)"
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="0.00"
+                                            value={currentItem.quantity_primary || ''}
+                                            onChange={(e) => setCurrentItem(prev => ({ ...prev, quantity_primary: parseFloat(e.target.value) || 0 }))}
+                                        />
+                                        <span className="absolute right-3 top-9 text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded">Tấn</span>
+                                    </div>
+                                    <div className="relative">
+                                        <Input
+                                            id="price"
+                                            label="Đơn giá (*)"
+                                            placeholder="0"
+                                            value={currentItem.price ? formatNumber(currentItem.price, 0) : ''}
+                                            onChange={(e) => {
+                                                const rawValue = e.target.value.replace(/\D/g, '');
+                                                setCurrentItem(prev => ({ ...prev, price: parseInt(rawValue) || 0 }));
+                                            }}
+                                        />
+                                        <span className="absolute right-3 top-9 text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded">VNĐ</span>
+                                    </div>
+                                </div>
+                                
+                                {/* Preview Row */}
+                                {currentItem.material_id && currentItem.quantity_primary > 0 && (
+                                    <div className="mt-4 p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-lg bg-emerald-500 text-white flex items-center justify-center">
+                                                    <Package className="w-5 h-5" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-slate-800">
+                                                        {materials.find(m => m.id === currentItem.material_id)?.name}
+                                                    </p>
+                                                    <p className="text-sm text-slate-500">
+                                                        {formatNumber(currentItem.quantity_primary, 2)} Tấn × {formatNumber(currentItem.price, 0)} VNĐ
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-xs text-slate-400">Thành tiền</p>
+                                                <p className="font-bold text-lg text-emerald-600">
+                                                    {formatCurrency(currentItem.quantity_primary * currentItem.price)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="flex justify-end mt-4">
+                                    <Button 
+                                        onClick={addItem} 
+                                        leftIcon={<Plus className="w-4 h-4" />}
+                                        className="bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-200"
+                                        disabled={!currentItem.material_id || currentItem.quantity_primary <= 0}
+                                    >
+                                        Thêm vào danh sách
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Items List */}
+                        <Card className="overflow-hidden">
+                            <div className="bg-slate-50 px-6 py-4 border-b flex items-center justify-between">
+                                <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                    <Package className="w-5 h-5" />
+                                    Danh sách vật tư ({formData.items.length})
+                                </h3>
+                                {formData.items.length > 0 && (
+                                    <div className="text-sm text-slate-500">
+                                        Tổng: <span className="font-bold text-primary-600">{formatCurrency(calculateTotalAmount())}</span>
+                                    </div>
+                                )}
+                            </div>
+                            <CardContent className="p-0">
+                                {formData.items.length === 0 ? (
+                                    <div className="py-12 text-center">
+                                        <div className="w-16 h-16 mx-auto rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                                            <Package className="w-8 h-8 text-slate-300" />
+                                        </div>
+                                        <p className="text-slate-400 font-medium">Chưa có vật tư nào</p>
+                                        <p className="text-slate-300 text-sm">Thêm vật tư từ form bên trên</p>
+                                    </div>
+                                ) : (
+                                    <div className="p-4 space-y-3">
+                                        {formData.items.map((item, idx) => (
+                                            <MaterialSummaryCard key={idx} item={item} idx={idx} showDelete />
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        {/* Action Buttons */}
+                        <div className="flex justify-between items-center">
+                            <Button 
+                                variant="ghost" 
+                                onClick={() => setStep(2)} 
+                                leftIcon={<ChevronLeft className="w-4 h-4" />}
+                            >
+                                Quay lại
+                            </Button>
+                            <Button 
+                                onClick={() => setStep(4)} 
+                                rightIcon={<ChevronRight className="w-4 h-4" />}
+                                size="lg"
+                                className="px-8 shadow-lg shadow-primary-200"
+                                disabled={formData.items.length === 0}
+                            >
+                                Tiếp tục
+                            </Button>
+                        </div>
+                    </div>
+                    
+                    {/* Right Panel - Summary */}
+                    <div className="lg:col-span-1">
+                        <div className="sticky top-6 space-y-4">
+                            {/* Total Summary Card */}
+                            <Card className="overflow-hidden bg-gradient-to-br from-primary-500 to-primary-600 text-white border-0">
+                                <CardContent className="p-6">
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+                                            <DollarSign className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <p className="text-primary-100 text-sm">Tổng giá trị</p>
+                                            <p className="text-2xl font-black">{formatCurrency(calculateTotalAmount())}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/20">
+                                        <div>
+                                            <p className="text-primary-100 text-xs">Số loại vật tư</p>
+                                            <p className="text-xl font-bold">{formData.items.length}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-primary-100 text-xs">Tổng khối lượng</p>
+                                            <p className="text-xl font-bold">
+                                                {formatNumber(formData.items.reduce((sum, item) => sum + item.quantity_primary, 0), 2)}
+                                                <span className="text-sm font-normal ml-1">Tấn</span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            
+                            {/* Quick Stats */}
+                            <Card className="bg-gradient-to-br from-slate-50 to-slate-100">
+                                <CardContent className="p-4">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Chi tiết</h4>
+                                    <div className="space-y-2">
+                                        {formData.items.slice(0, 3).map((item, idx) => (
+                                            <div key={idx} className="flex items-center justify-between text-sm p-2 bg-white rounded-lg">
+                                                <span className="text-slate-600 truncate max-w-[120px]">{item.material?.name}</span>
+                                                <span className="font-bold text-primary-600">{formatNumber(item.quantity_primary, 2)}T</span>
+                                            </div>
+                                        ))}
+                                        {formData.items.length > 3 && (
+                                            <p className="text-xs text-center text-slate-400 pt-2">
+                                                +{formData.items.length - 3} vật tư khác
+                                            </p>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            
+                            <div className="text-center text-sm text-slate-400">
+                                <p>Bước 3/5</p>
+                                <p className="text-xs">Thêm danh sách vật tư</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Step 4: Thông tin vận chuyển */}
+            {step === 4 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left Panel - Transport Form */}
+                    <div className="lg:col-span-2 space-y-6">
+                        <Card className="overflow-hidden border-0 shadow-lg">
+                            <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-6 py-4">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Truck className="w-5 h-5" />
+                                    Thông tin vận chuyển
+                                </h3>
+                            </div>
+                            <CardContent className="p-6 space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="relative">
+                                        <Input
+                                            label="Ngày vận chuyển"
+                                            type="date"
+                                            value={formData.transport_record.transport_date}
+                                            onChange={e => setFormData(prev => ({
+                                                ...prev,
+                                                transport_record: { ...prev.transport_record, transport_date: e.target.value }
+                                            }))}
+                                        />
+                                        <Calendar className="absolute right-3 top-9 w-4 h-4 text-slate-400" />
+                                    </div>
+                                    <Input
+                                        label="Số phiếu / Ticket"
+                                        placeholder="Nhập số phiếu cân/vận đơn"
+                                        value={formData.transport_record.ticket_number}
+                                        onChange={e => setFormData(prev => ({
+                                            ...prev,
+                                            transport_record: { ...prev.transport_record, ticket_number: e.target.value }
+                                        }))}
+                                    />
+                                </div>
+                                
+                                <div className="pt-4 border-t border-slate-100">
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                        <Truck className="w-4 h-4" /> Đơn vị & Phương tiện
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <Select
+                                            label="Đơn vị vận chuyển (*)"
+                                            options={[
+                                                { value: '', label: 'Chọn đơn vị vận chuyển...' },
+                                                ...transportUnits.map(u => ({ value: u.id, label: u.name }))
+                                            ]}
+                                            value={formData.transport_record.transport_unit_id}
+                                            onChange={e => {
+                                                const unit = transportUnits.find(u => u.id === e.target.value);
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    transport_record: {
+                                                        ...prev.transport_record,
+                                                        transport_unit_id: e.target.value,
+                                                        transport_company: unit?.name || '',
+                                                        vehicle_id: '',
+                                                        vehicle_plate: ''
+                                                    }
+                                                }));
+                                            }}
+                                        />
+                                        <Select
+                                            label="Biển số xe (*)"
+                                            options={[
+                                                { value: '', label: 'Chọn xe...' },
+                                                ...vehicles
+                                                    .filter(v => v.transport_unit_id === formData.transport_record.transport_unit_id)
+                                                    .map(v => ({ value: v.id, label: v.plate_number }))
+                                            ]}
+                                            value={formData.transport_record.vehicle_id}
+                                            onChange={e => {
+                                                const vehicle = vehicles.find(v => v.id === e.target.value);
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    transport_record: {
+                                                        ...prev.transport_record,
+                                                        vehicle_id: e.target.value,
+                                                        vehicle_plate: vehicle?.plate_number || ''
+                                                    }
+                                                }));
+                                            }}
+                                            disabled={!formData.transport_record.transport_unit_id}
+                                        />
+                                    </div>
+                                    
+                                    {/* Vehicle Preview */}
+                                    {formData.transport_record.vehicle_plate && (
+                                        <div className="mt-4 p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-14 h-14 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-lg shadow-orange-200">
+                                                    <Truck className="w-7 h-7" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <p className="text-xs text-orange-600 uppercase font-bold">Phương tiện đã chọn</p>
+                                                    <p className="text-2xl font-black text-slate-900">{formData.transport_record.vehicle_plate}</p>
+                                                    <p className="text-sm text-slate-500">{formData.transport_record.transport_company}</p>
+                                                </div>
+                                                <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center">
+                                                    <Check className="w-5 h-5" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Hidden fields */}
+                                <div className="hidden">
+                                    <Input value={formData.transport_record.material_id} readOnly />
+                                    <Input value={formData.transport_record.quantity_primary} readOnly />
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Materials List */}
+                        <Card className="overflow-hidden">
+                            <div className="bg-slate-50 px-6 py-4 border-b flex items-center justify-between">
+                                <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                    <Package className="w-5 h-5" />
+                                    Vật tư cần vận chuyển
+                                </h3>
+                                <span className="text-sm text-slate-400">{formData.items.length} mặt hàng</span>
+                            </div>
+                            <CardContent className="p-4">
+                                <div className="space-y-3">
+                                    {formData.items.map((item, idx) => (
+                                        <MaterialSummaryCard key={idx} item={item} idx={idx} />
+                                    ))}
+                                </div>
+                                <div className="mt-4 pt-4 border-t flex justify-between items-center">
+                                    <span className="text-sm text-slate-500">Tổng cộng:</span>
+                                    <span className="text-xl font-black text-primary-600">{formatCurrency(calculateTotalAmount())}</span>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Action Buttons */}
+                        <div className="flex justify-between items-center">
+                            <Button 
+                                variant="ghost" 
+                                onClick={() => setStep(3)} 
+                                leftIcon={<ChevronLeft className="w-4 h-4" />}
+                            >
+                                Quay lại
+                            </Button>
+                            <Button 
+                                onClick={() => setStep(5)} 
+                                rightIcon={<ChevronRight className="w-4 h-4" />}
+                                size="lg"
+                                className="px-8 shadow-lg shadow-primary-200"
+                                disabled={!formData.transport_record.vehicle_plate}
+                            >
+                                Xem lại & Xác nhận
+                            </Button>
+                        </div>
+                    </div>
+                    
+                    {/* Right Panel - Summary */}
+                    <div className="lg:col-span-1">
+                        <div className="sticky top-6 space-y-4">
+                            {/* Transport Summary */}
+                            <Card className="overflow-hidden bg-gradient-to-br from-orange-500 to-amber-500 text-white border-0">
+                                <CardContent className="p-6">
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+                                            <Truck className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <p className="text-orange-100 text-sm">Vận chuyển</p>
+                                            <p className="text-xl font-black">
+                                                {formData.transport_record.vehicle_plate || '---'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/20">
+                                        <div>
+                                            <p className="text-orange-100 text-xs">Ngày vận chuyển</p>
+                                            <p className="font-bold">{formatDate(formData.transport_record.transport_date)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-orange-100 text-xs">Đơn vị</p>
+                                            <p className="font-bold truncate">{formData.transport_record.transport_company || '---'}</p>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            
+                            {/* Order Summary */}
+                            <Card className="bg-gradient-to-br from-slate-50 to-slate-100">
+                                <CardContent className="p-4">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Tổng quan đơn hàng</h4>
+                                    <div className="space-y-3">
+                                        <div className="flex justify-between items-center p-3 bg-white rounded-lg">
+                                            <span className="text-slate-600">Số loại vật tư</span>
+                                            <span className="font-bold text-slate-900">{formData.items.length}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-3 bg-white rounded-lg">
+                                            <span className="text-slate-600">Tổng khối lượng</span>
+                                            <span className="font-bold text-slate-900">
+                                                {formatNumber(formData.items.reduce((sum, item) => sum + item.quantity_primary, 0), 2)} Tấn
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-3 bg-primary-50 rounded-lg border border-primary-100">
+                                            <span className="text-primary-600 font-medium">Tổng giá trị</span>
+                                            <span className="font-bold text-primary-700">{formatCurrency(calculateTotalAmount())}</span>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            
+                            <div className="text-center text-sm text-slate-400">
+                                <p>Bước 4/5</p>
+                                <p className="text-xs">Thông tin vận chuyển</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Step 5: Xác nhận và Hoàn tất */}
+            {step === 5 && (
+                <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                    {/* Hero Summary Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="relative overflow-hidden bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl p-6 text-white shadow-xl shadow-primary-200/50">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                            <div className="relative">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                                        <DollarSign className="w-5 h-5" />
+                                    </div>
+                                    <p className="text-primary-100 text-sm uppercase font-medium tracking-wide">Tổng tiền hàng</p>
+                                </div>
+                                <p className="text-3xl font-black">{formatCurrency(calculateTotalAmount())}</p>
+                            </div>
+                        </div>
+
+                        <div className="relative overflow-hidden bg-gradient-to-br from-orange-500 to-amber-500 rounded-2xl p-6 text-white shadow-xl shadow-orange-200/50">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                            <div className="relative">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                                        <Scale className="w-5 h-5" />
+                                    </div>
+                                    <p className="text-orange-100 text-sm uppercase font-medium tracking-wide">Tổng sản lượng</p>
+                                </div>
+                                <p className="text-3xl font-black">
+                                    {formatNumber(formData.items.reduce((sum, item) => sum + item.quantity_primary, 0), 2)}
+                                    <span className="text-lg font-normal ml-2">Tấn</span>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl p-6 text-white shadow-xl shadow-indigo-200/50">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                            <div className="relative">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                                        <Truck className="w-5 h-5" />
+                                    </div>
+                                    <p className="text-indigo-100 text-sm uppercase font-medium tracking-wide">Phương tiện</p>
+                                </div>
+                                <p className="text-3xl font-black">{formData.transport_record.vehicle_plate || '---'}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Details Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Receipt Details */}
+                        <Card className="overflow-hidden border-0 shadow-lg">
+                            <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-6 py-4">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <ClipboardList className="w-5 h-5" />
+                                    Thông tin phiếu nhập
+                                </h3>
+                            </div>
+                            <CardContent className="p-6 space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Loại hình</p>
+                                        <p className="font-bold text-slate-800">{getReceiptTypeInfo().title}</p>
+                                    </div>
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Ngày lập phiếu</p>
+                                        <p className="font-bold text-slate-800">{formatDate(formData.receipt_date)}</p>
+                                    </div>
+                                </div>
+
+                                <div className="pt-4 border-t">
+                                    <p className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2">
+                                        <Package className="w-4 h-4" /> Danh sách vật tư ({formData.items.length})
+                                    </p>
+                                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                                        {formData.items.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between items-center p-3 rounded-lg bg-gradient-to-r from-slate-50 to-white border border-slate-100 hover:shadow-sm transition-shadow">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center text-primary-600 font-bold text-sm">
+                                                        {idx + 1}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-bold text-slate-800">{item.material?.name}</p>
+                                                        <p className="text-xs text-slate-500">
+                                                            {formatNumber(item.quantity_primary, 2)} Tấn × {formatNumber(item.unit_price, 0)} VNĐ
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <p className="font-bold text-primary-600">{formatCurrency(item.quantity_primary * item.unit_price)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-4 pt-4 border-t flex justify-between items-center">
+                                        <span className="text-slate-500">Tổng cộng:</span>
+                                        <span className="text-xl font-black text-primary-600">{formatCurrency(calculateTotalAmount())}</span>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Transport Details */}
+                        <Card className="overflow-hidden border-0 shadow-lg">
+                            <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-6 py-4">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Truck className="w-5 h-5" />
+                                    Chi tiết vận chuyển
+                                </h3>
+                            </div>
+                            <CardContent className="p-6">
+                                {/* Vehicle Card */}
+                                <div className="p-4 rounded-xl bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 mb-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center shadow-lg shadow-orange-200">
+                                            <Truck className="w-8 h-8" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="text-xs text-orange-600 uppercase font-bold">Biển số xe</p>
+                                            <p className="text-2xl font-black text-slate-900">{formData.transport_record.vehicle_plate}</p>
+                                            <p className="text-sm text-slate-500">{formData.transport_record.transport_company}</p>
+                                        </div>
+                                        <div className="w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center shadow-lg shadow-green-200">
+                                            <Check className="w-5 h-5" />
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Transport Info Grid */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Ngày vận chuyển</p>
+                                        <p className="font-bold text-slate-800">{formatDate(formData.transport_record.transport_date)}</p>
+                                    </div>
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Số phiếu / Ticket</p>
+                                        <p className="font-bold text-slate-800">{formData.transport_record.ticket_number || '---'}</p>
+                                    </div>
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Số loại vật tư</p>
+                                        <p className="font-bold text-slate-800">{formData.items.length} loại</p>
+                                    </div>
+                                    <div className="p-3 bg-slate-50 rounded-lg">
+                                        <p className="text-xs text-slate-400 uppercase font-medium mb-1">Tổng khối lượng</p>
+                                        <p className="font-bold text-slate-800">
+                                            {formatNumber(formData.items.reduce((sum, item) => sum + item.quantity_primary, 0), 2)} Tấn
+                                        </p>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* Action Footer */}
+                    <Card className="border-0 shadow-lg overflow-hidden">
+                        <div className="bg-gradient-to-r from-slate-50 to-slate-100 p-6">
+                            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => setStep(4)}
+                                    leftIcon={<ChevronLeft className="w-4 h-4" />}
+                                    className="w-full md:w-auto"
+                                >
+                                    Quay lại chỉnh sửa
+                                </Button>
+                                <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
+                                    <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-lg border border-amber-200">
+                                        <AlertCircle className="w-4 h-4" />
+                                        <p className="text-sm font-medium">Kiểm tra kỹ trước khi xác nhận</p>
+                                    </div>
+                                    <Button
+                                        onClick={handleSubmit}
+                                        disabled={isSubmitting}
+                                        size="lg"
+                                        className="w-full md:w-auto px-12 h-14 text-lg font-bold shadow-xl shadow-primary-200 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700"
+                                    >
+                                        {isSubmitting ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-5 h-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                                Đang lưu...
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2">
+                                                <CheckCircle2 className="w-5 h-5" />
+                                                Xác nhận & Hoàn tất
+                                            </div>
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+            )}
+
+            {/* Step 6: Thành công & In phiếu */}
+            {step === 6 && (
+                <div className="flex flex-col items-center justify-center py-16 animate-in zoom-in-95 duration-500">
+                    <div className="max-w-lg w-full space-y-8">
+                        {/* Success Animation */}
+                        <div className="relative mx-auto w-32 h-32">
+                            <div className="absolute inset-0 bg-green-200 rounded-full animate-ping opacity-25"></div>
+                            <div className="relative w-32 h-32 bg-gradient-to-br from-green-400 to-emerald-500 rounded-full flex items-center justify-center shadow-2xl shadow-green-200">
+                                <CheckCircle2 className="w-16 h-16 text-white" />
+                            </div>
+                        </div>
+
+                        {/* Success Message */}
+                        <div className="text-center space-y-3">
+                            <h2 className="text-4xl font-black text-slate-900 tracking-tight">
+                                🎉 Tạo phiếu thành công!
+                            </h2>
+                            <p className="text-slate-500 text-lg">
+                                Phiếu nhập hàng đã được lưu vào hệ thống.
+                            </p>
+                        </div>
+
+                        {/* Summary Card */}
+                        <Card className="bg-gradient-to-br from-slate-50 to-slate-100 border-0">
+                            <CardContent className="p-6">
+                                <div className="grid grid-cols-3 gap-4 text-center">
+                                    <div>
+                                        <p className="text-2xl font-black text-primary-600">{formData.items.length}</p>
+                                        <p className="text-xs text-slate-400 uppercase">Vật tư</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-2xl font-black text-orange-600">
+                                            {formatNumber(formData.items.reduce((sum, item) => sum + item.quantity_primary, 0), 1)}T
+                                        </p>
+                                        <p className="text-xs text-slate-400 uppercase">Khối lượng</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-2xl font-black text-green-600">{formData.transport_record.vehicle_plate}</p>
+                                        <p className="text-xs text-slate-400 uppercase">Xe</p>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Action Buttons */}
+                        <div className="flex flex-col gap-3">
+                            <Button
+                                size="lg"
+                                className="w-full h-14 text-lg font-bold shadow-xl shadow-primary-200 bg-gradient-to-r from-primary-500 to-primary-600"
+                                onClick={() => navigate(`/purchases/${createdReceiptId}`)}
+                                leftIcon={<Printer className="w-5 h-5" />}
+                            >
+                                Xem chi tiết & In phiếu
+                            </Button>
+                            <div className="grid grid-cols-2 gap-3">
+                                <Button
+                                    variant="ghost"
+                                    size="lg"
+                                    className="h-12 font-medium border border-slate-200 hover:bg-slate-50"
+                                    onClick={() => navigate('/purchases')}
+                                >
+                                    Danh sách phiếu
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="lg"
+                                    className="h-12 font-medium border border-primary-200 text-primary-600 hover:bg-primary-50"
+                                    onClick={() => window.location.reload()}
+                                    leftIcon={<Plus className="w-4 h-4" />}
+                                >
+                                    Tạo phiếu mới
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
-}
-
-function formatDate(date: string) {
-    if (!date) return '-';
-    try {
-        const d = new Date(date);
-        return d.toLocaleDateString('vi-VN');
-    } catch {
-        return date;
-    }
 }

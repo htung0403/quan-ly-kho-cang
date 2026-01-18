@@ -56,7 +56,7 @@ const navItems: NavItem[] = [
         icon: <Warehouse className="w-5 h-5" />,
     },
     {
-        label: 'Đội xe',
+        label: 'Đơn vị vận chuyển',
         href: '/vehicles',
         icon: <Truck className="w-5 h-5" />,
     },

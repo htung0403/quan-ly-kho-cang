@@ -7,6 +7,7 @@ const apiClient = axios.create({
     timeout: 30000,
     headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
     },
 });
 
@@ -201,33 +202,156 @@ export const vehiclesApi = {
     getById: (id: string) =>
         apiClient.get(`/vehicles/${id}`),
 
-    create: (data: Partial<{ plate_number: string; driver_name: string; capacity_tons: number; vehicle_type: string }>) =>
+    create: (data: Partial<{ plate_number: string; driver_name: string; capacity_tons: number; vehicle_type: string; transport_unit_id: string }>) =>
         apiClient.post('/vehicles', data),
 
-    update: (id: string, data: Partial<{ driver_name: string; status: string; is_active: boolean }>) =>
+    update: (id: string, data: Partial<{ driver_name: string; status: string; is_active: boolean; transport_unit_id: string }>) =>
         apiClient.put(`/vehicles/${id}`, data),
 
     delete: (id: string) =>
         apiClient.delete(`/vehicles/${id}`),
 };
 
-// Purchases API
-export const purchasesApi = {
-    getAll: (params?: { page?: number; limit?: number; warehouse_id?: string; project_id?: string; from_date?: string; to_date?: string; search?: string }) =>
-        apiClient.get('/purchases', { params }),
+// Transport Units API
+export const transportUnitsApi = {
+    getAll: (params?: { page?: number; limit?: number; search?: string }) =>
+        apiClient.get('/transport-units', { params }),
 
     getById: (id: string) =>
-        apiClient.get(`/purchases/${id}`),
+        apiClient.get(`/transport-units/${id}`),
 
     create: (data: any) =>
-        apiClient.post('/purchases', data),
+        apiClient.post('/transport-units', data),
 
-    update: (id: string, data: Partial<{ notes: string }>) =>
-        apiClient.put(`/purchases/${id}`, data),
+    update: (id: string, data: any) =>
+        apiClient.put(`/transport-units/${id}`, data),
 
     delete: (id: string) =>
-        apiClient.delete(`/purchases/${id}`),
+        apiClient.delete(`/transport-units/${id}`),
 };
+
+// Purchases API (V2 - supports 2 types: direct_to_site, warehouse_import)
+export const purchasesApi = {
+    getAll: (params?: {
+        page?: number;
+        limit?: number;
+        receipt_type?: 'direct_to_site' | 'warehouse_import';
+        warehouse_id?: string;
+        project_id?: string;
+        date_from?: string;
+        date_to?: string;
+        search?: string
+    }) => apiClient.get('/purchases/v2', { params }),
+
+    getById: (id: string) =>
+        apiClient.get(`/purchases/v2/${id}`),
+
+    create: (data: {
+        receipt_type: 'direct_to_site' | 'warehouse_import';
+        receipt_date?: string;
+        notes?: string;
+        items: Array<{
+            material_id: string;
+            quantity_primary: number;
+            unit_price: number;
+            notes?: string;
+        }>;
+        direct_to_site_details?: {
+            quarry_name: string;
+            supplier_name: string;
+            supplier_phone?: string;
+            destination_site?: string;
+            invoice_number?: string;
+            invoice_date?: string;
+        };
+        warehouse_import_details?: {
+            warehouse_id: string;
+            project_id?: string;
+            supplier_name?: string;
+            supplier_phone?: string;
+            invoice_number?: string;
+            invoice_date?: string;
+        };
+        transport_records?: Array<{
+            transport_date?: string;
+            transport_company?: string;
+            vehicle_plate: string;
+            ticket_number?: string;
+            material_id?: string;
+            quantity_primary?: number;
+            density?: number;
+            unit_price?: number;
+            transport_fee?: number;
+            driver_name?: string;
+            driver_phone?: string;
+            origin?: string;
+            destination?: string;
+            notes?: string;
+        }>;
+    }) => apiClient.post('/purchases/v2', data),
+
+    delete: (id: string) =>
+        apiClient.delete(`/purchases/v2/${id}`),
+
+    // Transport Records (linked to purchase receipts)
+    getTransportRecords: (receiptId: string) =>
+        apiClient.get(`/purchases/v2/${receiptId}/transport`),
+
+    addTransportRecord: (receiptId: string, data: {
+        transport_date?: string;
+        transport_company?: string;
+        vehicle_id?: string;
+        vehicle_plate: string;
+        ticket_number?: string;
+        driver_name?: string;
+        driver_phone?: string;
+        origin?: string;
+        destination?: string;
+        distance_km?: number;
+        departure_time?: string;
+        arrival_time?: string;
+        material_id?: string;
+        quantity_primary?: number;
+        quantity_secondary?: number;
+        density?: number;
+        unit_price?: number;
+        transport_fee?: number;
+        notes?: string;
+    }) => apiClient.post(`/purchases/v2/${receiptId}/transport`, data),
+
+    updateTransportRecord: (transportId: string, data: Partial<{
+        transport_date: string;
+        transport_company: string;
+        vehicle_plate: string;
+        ticket_number: string;
+        driver_name: string;
+        driver_phone: string;
+        origin: string;
+        destination: string;
+        distance_km: number;
+        departure_time: string;
+        arrival_time: string;
+        density: number;
+        unit_price: number;
+        transport_fee: number;
+        notes: string;
+    }>) => apiClient.put(`/purchases/v2/transport/${transportId}`, data),
+
+    deleteTransportRecord: (transportId: string) =>
+        apiClient.delete(`/purchases/v2/transport/${transportId}`),
+
+    // Reports
+    getDirectToSiteReport: (params?: { date_from?: string; date_to?: string; quarry_name?: string; supplier_name?: string }) =>
+        apiClient.get('/purchases/v2/reports/direct-to-site', { params }),
+
+    getWarehouseImportReport: (params?: { date_from?: string; date_to?: string; warehouse_id?: string }) =>
+        apiClient.get('/purchases/v2/reports/warehouse-import', { params }),
+
+    getTransportReport: (params?: { date_from?: string; date_to?: string; transport_company?: string; vehicle_plate?: string }) =>
+        apiClient.get('/purchases/v2/reports/transport', { params }),
+};
+
+
 
 // Exports API
 export const exportsApi = {
@@ -322,6 +446,7 @@ export const api = {
     materials: materialsApi,
     warehouses: warehousesApi,
     vehicles: vehiclesApi,
+    transportUnits: transportUnitsApi,
     purchases: purchasesApi,
     exports: exportsApi,
     transport: transportApi,
@@ -329,3 +454,4 @@ export const api = {
     settings: settingsApi,
     lookups: lookupsApi,
 };
+

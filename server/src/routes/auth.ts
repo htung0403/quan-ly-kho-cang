@@ -15,6 +15,18 @@ function signToken(payload: object, secret: string, expiresIn: string): string {
 const router = Router();
 
 /**
+ * @route GET /api/auth/login
+ * @desc Helper route to inform that login must be POST
+ */
+router.get('/login', (req, res) => {
+    res.status(405).json({
+        success: false,
+        error: 'Method Not Allowed',
+        message: 'Endpoint này chỉ chấp nhận request POST. Nếu bạn đang tìm trang đăng nhập, hãy truy cập URL của Frontend.',
+    });
+});
+
+/**
  * POST /api/auth/login
  * Login with email and password
  */

@@ -8,16 +8,15 @@ const router = Router();
 router.use(authenticate);
 
 /**
- * GET /api/vehicles
- * Lấy danh sách xe với phân trang và lọc
+ * GET /api/transport-units
+ * Lấy danh sách đơn vị vận chuyển
  */
 router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const {
             page = '1',
-            limit = '10',
+            limit = '1000',
             search = '',
-            status = '',
             is_active = '',
         } = req.query;
 
@@ -28,19 +27,16 @@ router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, 
         const supabase = getSupabaseClient();
 
         let query = supabase
-            .from('vehicles')
+            .from('transport_units')
             .select(`
                 *,
-                transport_unit:transport_units(id, name)
+                vehicles (*)
             `, { count: 'exact' })
             .is('deleted_at', null)
-            .order('plate_number', { ascending: true });
+            .order('name', { ascending: true });
 
         if (search) {
-            query = query.or(`plate_number.ilike.%${search}%,driver_name.ilike.%${search}%`);
-        }
-        if (status) {
-            query = query.eq('status', status);
+            query = query.ilike('name', `%${search}%`);
         }
         if (is_active !== '') {
             query = query.eq('is_active', is_active === 'true');
@@ -68,42 +64,27 @@ router.get('/', authorize('vehicles:read'), async (req: Request, res: Response, 
 });
 
 /**
- * POST /api/vehicles
- * Thêm xe mới
+ * POST /api/transport-units
  */
 router.post('/', authorize('vehicles:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { plate_number, driver_name, driver_phone, vehicle_type, capacity_tons, notes, transport_unit_id } = req.body;
+        const { name, contact_name, phone, email, address, notes } = req.body;
 
-        if (!plate_number) {
-            throw new AppError('Biển số xe là bắt buộc', 400);
+        if (!name) {
+            throw new AppError('Tên đơn vị vận chuyển là bắt buộc', 400);
         }
 
         const supabase = getSupabaseClient();
 
-        // Kiểm tra biển số đã tồn tại chưa
-        const { data: existing } = await supabase
-            .from('vehicles')
-            .select('id')
-            .eq('plate_number', plate_number.toUpperCase())
-            .is('deleted_at', null)
-            .single();
-
-        if (existing) {
-            throw new AppError('Biển số xe này đã được khai báo trên hệ thống', 400);
-        }
-
         const { data, error } = await supabase
-            .from('vehicles')
+            .from('transport_units')
             .insert({
-                plate_number: plate_number.toUpperCase(),
-                driver_name,
-                driver_phone,
-                vehicle_type,
-                capacity_tons,
+                name,
+                contact_name,
+                phone,
+                email,
+                address,
                 notes,
-                transport_unit_id,
-                status: 'available',
                 is_active: true
             })
             .select()
@@ -114,7 +95,7 @@ router.post('/', authorize('vehicles:write'), async (req: Request, res: Response
         res.status(201).json({
             success: true,
             data,
-            message: 'Thêm xe thành công',
+            message: 'Thêm đơn vị vận chuyển thành công',
         });
     } catch (error) {
         next(error);
@@ -122,8 +103,7 @@ router.post('/', authorize('vehicles:write'), async (req: Request, res: Response
 });
 
 /**
- * PUT /api/vehicles/:id
- * Cập nhật thông tin xe
+ * PUT /api/transport-units/:id
  */
 router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -133,7 +113,7 @@ router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Respon
         const supabase = getSupabaseClient();
 
         const { data, error } = await supabase
-            .from('vehicles')
+            .from('transport_units')
             .update(updateData)
             .eq('id', id)
             .is('deleted_at', null)
@@ -141,12 +121,12 @@ router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Respon
             .single();
 
         if (error) throw new AppError(error.message, 500);
-        if (!data) throw new AppError('Không tìm thấy thông tin xe', 404);
+        if (!data) throw new AppError('Không tìm thấy thông tin đơn vị', 404);
 
         res.json({
             success: true,
             data,
-            message: 'Cập nhật thông tin xe thành công',
+            message: 'Cập nhật thành công',
         });
     } catch (error) {
         next(error);
@@ -154,16 +134,15 @@ router.put('/:id', authorize('vehicles:write'), async (req: Request, res: Respon
 });
 
 /**
- * DELETE /api/vehicles/:id
- * Xóa xe (soft delete)
+ * DELETE /api/transport-units/:id
  */
-router.delete('/:id', authorize('vehicles:delete'), async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize('vehicles:write'), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const supabase = getSupabaseClient();
 
         const { error } = await supabase
-            .from('vehicles')
+            .from('transport_units')
             .update({ deleted_at: new Date().toISOString(), is_active: false })
             .eq('id', id);
 
@@ -171,7 +150,7 @@ router.delete('/:id', authorize('vehicles:delete'), async (req: Request, res: Re
 
         res.json({
             success: true,
-            message: 'Xóa xe thành công',
+            message: 'Xóa đơn vị vận chuyển thành công',
         });
     } catch (error) {
         next(error);

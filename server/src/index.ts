@@ -26,6 +26,16 @@ if (config.nodeEnv === 'development') {
     });
 }
 
+// Root route
+app.get('/', (req, res) => {
+    res.json({
+        success: true,
+        message: 'EBH API Server is running',
+        version: '1.0.0',
+        docs: '/api/health'
+    });
+});
+
 // API routes
 app.use('/api', routes);
 

@@ -315,7 +315,7 @@ warehouse_id,
 
 /**
  * GET /api/reports/transport
- * Get transport/vehicle report
+ * Get transport/vehicle report - Query from purchase_receipt_headers with items
  */
 router.get('/transport', authorize('reports:read'), async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -327,59 +327,135 @@ router.get('/transport', authorize('reports:read'), async (req: Request, res: Re
 
         const supabase = getSupabaseClient();
 
+        // Query from purchase_receipt_headers with nested items and transport_records
+        // vehicle_plate, driver_name are in transport_records, not headers
         let query = supabase
-            .from('transport_logs')
+            .from('purchase_receipt_headers')
             .select(`
-    *,
-    vehicle: vehicles(id, plate_number, driver_name),
-        export_receipt: export_receipts(
-            id,
-            receipt_number,
-            material: materials(id, name)
-        )
+                id,
+                receipt_number,
+                receipt_type,
+                receipt_date,
+                deleted_at,
+                transport_records(
+                    vehicle_id,
+                    transport_unit_id,
+                    vehicle_plate,
+                    driver_name,
+                    vehicle:vehicles(id, plate_number, driver_name, transport_unit_id),
+                    transport_unit:transport_units(id, name, contact_name, phone)
+                ),
+                items:purchase_receipt_items_v2(
+                    id,
+                    material_id,
+                    quantity_primary,
+                    quantity_secondary,
+                    density_used,
+                    unit_price,
+                    total_amount,
+                    material:materials(id, name, code)
+                )
             `)
-            .gte('created_at', from_date)
-            .lte('created_at', to_date);
+            .gte('receipt_date', from_date)
+            .lte('receipt_date', to_date)
+            .is('deleted_at', null);
 
-        if (vehicle_id) {
-            query = query.eq('vehicle_id', vehicle_id);
-        }
-
-        const { data, error } = await query;
+        const { data, error } = await query.order('receipt_date', { ascending: false });
 
         if (error) throw new AppError(error.message, 500);
+
+        // Filter by vehicle_id if provided
+        let filteredData = data || [];
+        if (vehicle_id) {
+            filteredData = filteredData.filter((h: any) => {
+                // transport_records can be object (due to UNIQUE constraint) or array
+                const tr = h.transport_records;
+                if (Array.isArray(tr)) {
+                    return tr.some((t: any) => t.vehicle_id === vehicle_id);
+                }
+                return tr?.vehicle_id === vehicle_id;
+            });
+        }
+
+        // Flatten data: one row per item with header info
+        const transformedData: any[] = [];
+        filteredData.forEach((header: any) => {
+            // transport_records is an object (due to UNIQUE constraint on receipt_id), not array
+            const tr = header.transport_records;
+            const transportRecord = Array.isArray(tr) ? tr[0] : tr;
+            const vehicle = transportRecord?.vehicle;
+            const transportUnit = transportRecord?.transport_unit;
+            
+            header.items?.forEach((item: any) => {
+                transformedData.push({
+                    id: item.id,
+                    transport_date: header.receipt_date,
+                    transport_company: transportUnit?.name || '',
+                    vehicle_plate: transportRecord?.vehicle_plate || vehicle?.plate_number || '',
+                    ticket_number: header.receipt_number || '',
+                    material_id: item.material_id,
+                    material: item.material,
+                    quantity_primary: item.quantity_primary,
+                    density: item.density_used || 0,
+                    unit_price: item.unit_price || 0,
+                    transport_fee: item.total_amount || 0,
+                    driver_name: transportRecord?.driver_name || vehicle?.driver_name || '',
+                    origin: '',
+                    destination: '',
+                    notes: '',
+                    receipt_id: header.id,
+                    vehicle_id: transportRecord?.vehicle_id,
+                    transport_unit_id: transportRecord?.transport_unit_id,
+                    vehicle: vehicle,
+                    transport_unit: transportUnit,
+                    receipt: {
+                        id: header.id,
+                        receipt_number: header.receipt_number,
+                        receipt_type: header.receipt_type
+                    }
+                });
+            });
+        });
+
+        console.log('Transformed data count:', transformedData.length);
 
         // Aggregate by vehicle
         const vehicleSummary: Record<string, {
             vehicle_id: string;
             plate_number: string;
-            driver_name: string;
             total_trips: number;
-            total_m3: number;
-            total_distance_km: number;
+            total_tons: number;
         }> = {};
 
-        data?.forEach((log: any) => {
+        // Count unique receipts per vehicle for trip count
+        const vehicleReceipts: Record<string, Set<string>> = {};
+
+        transformedData.forEach((log: any) => {
             const vid = log.vehicle_id;
-            if (!vehicleSummary[vid]) {
+            if (vid && !vehicleSummary[vid]) {
                 vehicleSummary[vid] = {
                     vehicle_id: vid,
-                    plate_number: (log.vehicle as any)?.plate_number || '',
-                    driver_name: (log.vehicle as any)?.driver_name || '',
+                    plate_number: log.vehicle?.plate_number || log.vehicle_plate || '',
                     total_trips: 0,
-                    total_m3: 0,
-                    total_distance_km: 0,
+                    total_tons: 0,
                 };
+                vehicleReceipts[vid] = new Set();
             }
-            vehicleSummary[vid].total_trips += 1;
-            vehicleSummary[vid].total_m3 += log.quantity_secondary || 0;
-            vehicleSummary[vid].total_distance_km += log.distance_km || 0;
+            if (vid) {
+                vehicleReceipts[vid].add(log.receipt_id);
+                vehicleSummary[vid].total_tons += parseFloat(log.quantity_primary) || 0;
+            }
+        });
+
+        // Set trip count from unique receipts
+        Object.keys(vehicleSummary).forEach(vid => {
+            vehicleSummary[vid].total_trips = vehicleReceipts[vid].size;
         });
 
         res.json({
             success: true,
             data: {
-                details: data,
+                details: transformedData,
                 summary: Object.values(vehicleSummary),
                 period: { from_date, to_date },
             },
