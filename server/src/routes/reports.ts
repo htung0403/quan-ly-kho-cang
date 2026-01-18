@@ -26,11 +26,18 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             supabase.from('vehicles').select('id', { count: 'exact' }).eq('is_active', true).is('deleted_at', null),
         ]);
 
-        // Get today's transactions
-        const [purchasesToday, exportsTody] = await Promise.all([
+        // Get today's transactions - query from BOTH old and new tables
+        const [purchasesTodayOld, purchasesTodayNew, exportsTody] = await Promise.all([
+            // Old table: purchase_receipts
             supabase
                 .from('purchase_receipts')
                 .select('quantity_primary, quantity_secondary, total_amount')
+                .eq('receipt_date', today)
+                .is('deleted_at', null),
+            // New table: purchase_receipt_headers
+            supabase
+                .from('purchase_receipt_headers')
+                .select('total_quantity_primary, total_quantity_secondary, total_amount')
                 .eq('receipt_date', today)
                 .is('deleted_at', null),
             supabase
@@ -40,10 +47,21 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
                 .is('deleted_at', null),
         ]);
 
-        // Get monthly totals
-        const [purchasesMonth, exportsMonth] = await Promise.all([
+        // Combine old + new purchase data
+        const oldPurchaseTons = purchasesTodayOld.data?.reduce((sum, r) => sum + (r.quantity_primary || 0), 0) || 0;
+        const oldPurchaseM3 = purchasesTodayOld.data?.reduce((sum, r) => sum + (r.quantity_secondary || 0), 0) || 0;
+        const newPurchaseTons = purchasesTodayNew.data?.reduce((sum, r) => sum + (r.total_quantity_primary || 0), 0) || 0;
+        const newPurchaseM3 = purchasesTodayNew.data?.reduce((sum, r) => sum + (r.total_quantity_secondary || 0), 0) || 0;
+
+        // Get monthly totals - query from BOTH old and new tables
+        const [purchasesMonthOld, purchasesMonthNew, exportsMonth] = await Promise.all([
             supabase
                 .from('purchase_receipts')
+                .select('total_amount')
+                .gte('receipt_date', monthStart)
+                .is('deleted_at', null),
+            supabase
+                .from('purchase_receipt_headers')
                 .select('total_amount')
                 .gte('receipt_date', monthStart)
                 .is('deleted_at', null),
@@ -55,9 +73,9 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
         ]);
 
         const todayPurchaseStats = {
-            count: purchasesToday.data?.length || 0,
-            tons: purchasesToday.data?.reduce((sum, r) => sum + (r.quantity_primary || 0), 0) || 0,
-            m3: purchasesToday.data?.reduce((sum, r) => sum + (r.quantity_secondary || 0), 0) || 0,
+            count: (purchasesTodayOld.data?.length || 0) + (purchasesTodayNew.data?.length || 0),
+            tons: oldPurchaseTons + newPurchaseTons,
+            m3: oldPurchaseM3 + newPurchaseM3,
         };
 
         const todayExportStats = {
@@ -67,17 +85,25 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
         };
 
         const monthlyRevenue = exportsMonth.data?.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 0;
-        const monthlyCost = purchasesMonth.data?.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 0;
+        const monthlyCostOld = purchasesMonthOld.data?.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 0;
+        const monthlyCostNew = purchasesMonthNew.data?.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 0;
+        const monthlyCost = monthlyCostOld + monthlyCostNew;
         const monthlyProfit = monthlyRevenue - monthlyCost;
 
-        // Get weekly data for chart (last 7 days)
+        // Get weekly data for chart (last 7 days) - query from BOTH tables
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
         const chartStart = sevenDaysAgo.toISOString().split('T')[0];
 
-        const [weeklyPurchases, weeklyExports] = await Promise.all([
+        const [weeklyPurchasesOld, weeklyPurchasesNew, weeklyExports] = await Promise.all([
             supabase
                 .from('purchase_receipts')
+                .select('receipt_date, total_amount')
+                .gte('receipt_date', chartStart)
+                .is('deleted_at', null)
+                .order('receipt_date', { ascending: true }),
+            supabase
+                .from('purchase_receipt_headers')
                 .select('receipt_date, total_amount')
                 .gte('receipt_date', chartStart)
                 .is('deleted_at', null)
@@ -106,7 +132,13 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             }
         });
 
-        weeklyPurchases.data?.forEach((r: any) => {
+        // Add costs from both old and new purchase tables
+        weeklyPurchasesOld.data?.forEach((r: any) => {
+            if (chartDataMap[r.receipt_date]) {
+                chartDataMap[r.receipt_date].cost += (r.total_amount || 0);
+            }
+        });
+        weeklyPurchasesNew.data?.forEach((r: any) => {
             if (chartDataMap[r.receipt_date]) {
                 chartDataMap[r.receipt_date].cost += (r.total_amount || 0);
             }
@@ -124,21 +156,39 @@ router.get('/dashboard', authorize('reports:read', 'purchases:read'), async (req
             supabase.from('vehicles').select('id', { count: 'exact' }).is('deleted_at', null),
         ]);
 
-        // Recent transactions (last 5)
-        const [recentPurchasesRes, recentExportsRes] = await Promise.all([
+        // Recent transactions (last 5) - query from BOTH old and new purchase tables
+        const [recentPurchasesOldRes, recentPurchasesNewRes, recentExportsRes] = await Promise.all([
+            // Old table
             supabase
                 .from('purchase_receipts')
                 .select(`
-id,
-    receipt_number,
-    receipt_date,
-    total_amount,
-    total_quantity_primary,
-    warehouse: warehouses(name),
-        creator: users!purchase_receipts_created_by_fkey(full_name),
-            items: purchase_receipt_items(
-                material: materials(name)
-            )
+                    id,
+                    receipt_number,
+                    receipt_date,
+                    total_amount,
+                    quantity_primary,
+                    warehouse: warehouses(name),
+                    creator: users!purchase_receipts_created_by_fkey(full_name),
+                    items: purchase_receipt_items(
+                        material: materials(name)
+                    )
+                `)
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false })
+                .limit(5),
+            // New table
+            supabase
+                .from('purchase_receipt_headers')
+                .select(`
+                    id,
+                    receipt_number,
+                    receipt_date,
+                    total_amount,
+                    total_quantity_primary,
+                    creator: users!purchase_receipt_headers_created_by_fkey(full_name),
+                    items: purchase_receipt_items_v2(
+                        material: materials(name)
+                    )
                 `)
                 .is('deleted_at', null)
                 .order('created_at', { ascending: false })
@@ -146,27 +196,40 @@ id,
             supabase
                 .from('export_receipts')
                 .select(`
-id,
-    receipt_number,
-    receipt_date,
-    total_amount,
-    quantity_secondary,
-    vehicle: vehicles(plate_number),
-        customer_name,
-        creator: users!export_receipts_created_by_fkey(full_name),
-            items: export_receipt_items(
-                material: materials(name)
-            )
+                    id,
+                    receipt_number,
+                    receipt_date,
+                    total_amount,
+                    quantity_secondary,
+                    vehicle: vehicles(plate_number),
+                    customer_name,
+                    creator: users!export_receipts_created_by_fkey(full_name),
+                    items: export_receipt_items(
+                        material: materials(name)
+                    )
                 `)
                 .is('deleted_at', null)
                 .order('created_at', { ascending: false })
                 .limit(5),
         ]);
 
-        const recentPurchases = recentPurchasesRes.data?.map((item: any) => ({
+        // Combine and sort recent purchases from both tables
+        const oldPurchases = (recentPurchasesOldRes.data || []).map((item: any) => ({
             ...item,
-            material_summary: item.items?.map((i: any) => i.material?.name).join(', ') || 'N/A'
-        })) || [];
+            total_quantity_primary: item.quantity_primary, // normalize field name
+            material_summary: item.items?.map((i: any) => i.material?.name).join(', ') || 'N/A',
+            _source: 'old'
+        }));
+        const newPurchases = (recentPurchasesNewRes.data || []).map((item: any) => ({
+            ...item,
+            material_summary: item.items?.map((i: any) => i.material?.name).join(', ') || 'N/A',
+            _source: 'new'
+        }));
+        
+        // Merge and get top 5 by receipt_date
+        const recentPurchases = [...oldPurchases, ...newPurchases]
+            .sort((a, b) => new Date(b.receipt_date).getTime() - new Date(a.receipt_date).getTime())
+            .slice(0, 5);
 
         const recentExports = recentExportsRes.data?.map((item: any) => ({
             ...item,
